@@ -177,6 +177,13 @@ GitHub Copilot / VS Code skills stay repo-local, not global. If you also want th
 node shared/scripts/install-auto-sync-hooks.mjs --vscode-repos=/abs/path/repo-one,/abs/path/repo-two
 ```
 
+Recommended operating model for repo-local VS Code / Copilot skills:
+
+- Treat `.github/skills/` as a **local-only mirror** in consumer repos.
+- Add `.github/skills/` to your global or local git ignore rules so those mirrors do not show up as product changes.
+- Use this repo (`agent-skills`) as the **only** managed source for those mirrors.
+- Do not manually copy from other repos such as `skills/.github/skills/`; that creates drift and mixed skill sets.
+
 ## Quality Gates
 
 - `node eval/harness/run.mjs` validates skill metadata, compatibility declarations, and required scenario coverage.
