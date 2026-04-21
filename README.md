@@ -1,5 +1,11 @@
 # Agent Skills for WordPress
 
+**Teach AI coding assistants how to build WordPress the right way.**
+
+Agent Skills are portable bundles of instructions, checklists, and scripts that help AI assistants (Claude, Copilot, Codex, Cursor, etc.) understand WordPress development patterns, avoid common mistakes, and follow best practices.
+
+> **AI Authorship Disclosure:** The upstream WordPress skills were generated using GPT-5.2 Codex (High Reasoning) from official Gutenberg and WordPress documentation, then reviewed and edited by WordPress contributors. This fork extends that base with additional Dan Knauss and third-party skills for WordPress operations, security, local environment management, and GitHub workflows. See [docs/ai-authorship.md](docs/ai-authorship.md) in upstream for the original disclosure context.
+
 [![CI](https://github.com/dknauss/agent-skills/actions/workflows/ci.yml/badge.svg?branch=trunk)](https://github.com/dknauss/agent-skills/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/dknauss/agent-skills)](https://github.com/dknauss/agent-skills/releases/latest)
 [![License: GPL-2.0-or-later](https://img.shields.io/badge/License-GPL--2.0--or--later-0f7c6b.svg)](LICENSE)
@@ -8,11 +14,21 @@ Fork of [WordPress/agent-skills](https://github.com/WordPress/agent-skills) with
 
 This is the canonical skill repo for all agent work in my WordPress project environments. Any AI agent (Claude, Codex, Cursor, Copilot) working on WordPress code or docs pulls skill definitions from this repo of repos.
 
+## Why Agent Skills?
+
+AI coding assistants are powerful, but they often:
+- Generate outdated WordPress patterns (pre-Gutenberg, pre-block themes)
+- Miss critical security considerations in plugin development
+- Skip proper block deprecations, causing "Invalid block" errors
+- Ignore existing tooling in your repo
+
+This fork keeps the upstream WordPress foundation, then layers in repo hygiene, security review, performance review, documentation, and local environment operations skills that I actually use day to day.
+
 ## Sources
 
 | Source | Skills | Notes |
 |--------|--------|-------|
-| [WordPress/agent-skills](https://github.com/WordPress/agent-skills) | 13 upstream skills from [WordPress.com](https://github.com/WordPress/)| Fork additions on `trunk` |
+| [WordPress/agent-skills](https://github.com/WordPress/agent-skills) | 14 upstream skills from [WordPress.com](https://github.com/WordPress/) including `blueprint` | Synced in from `upstream/trunk`, then adapted in this fork where needed. |
 | [jdevalk/skills](https://github.com/jdevalk/skills) | wp-github-actions, wp-readme-optimizer, github-repo, github-profile | Adapted from [Joost de Valk](https://github.com/jdevalk/). |
 | [elvismdev/claude-wordpress-skills](https://github.com/elvismdev/claude-wordpress-skills) | wp-performance-review | Adapted from [Elvis Morales](https://github.com/elvismdev); ported and adapted. |
 | This fork | wp-accessibility, wp-performance, wp-secure-code, wp-vip-standards, security-researcher, wordpress-security-doc-editor, wordpress-runbook-ops, studio, studio-xdebug, local-studio-env | Original skills by Dan Knauss and the robots. |
@@ -32,6 +48,7 @@ This is the canonical skill repo for all agent work in my WordPress project envi
 | **wp-interactivity-api** | Frontend interactivity with `data-wp-*` directives and stores |
 | **wp-abilities-api** | Capability-based permissions and REST API authentication |
 | **wpds** | WordPress Design System components and tokens |
+| **blueprint** | WordPress Playground Blueprints for declarative Playground environment setup |
 
 ### Operations and Tooling
 
@@ -92,7 +109,7 @@ General-purpose skills not specific to WordPress.
 
 ## Repo Structure
 
-```
+```text
 agent-skills/
 ├── skills/
 │   └── <skill-name>/
@@ -109,9 +126,10 @@ agent-skills/
 │   └── scenarios/                # BDD-style pass/fail test cases per skill
 ├── shared/
 │   └── scripts/
-│       ├── skillpack-build.mjs   # Build distribution packages
+│       ├── build-dist.sh         # Build distribution packages
+│       ├── generate-agents-md.mjs
 │       ├── skillpack-install.mjs # Install skills globally or into a project
-│       └── scaffold-skill.mjs    # Scaffold a new skill directory
+│       └── sync-global-skills.mjs
 └── docs/
     ├── authoring-guide.md        # How to create and improve skills
     ├── principles.md             # Design philosophy
@@ -124,7 +142,7 @@ agent-skills/
 ### Global install for Claude Code
 
 ```bash
-node shared/scripts/skillpack-build.mjs --clean
+node shared/scripts/build-dist.sh
 node shared/scripts/skillpack-install.mjs --global
 ```
 
@@ -188,15 +206,15 @@ Recommended operating model for repo-local VS Code / Copilot skills:
 
 - `node eval/harness/run.mjs` validates skill metadata, compatibility declarations, and required scenario coverage.
 - `bash eval/harness/run-scenarios.sh eval/scenarios/` validates scenario file structure.
-- `node shared/scripts/skillpack-build.mjs --clean --out=dist --targets=codex,vscode,claude,cursor` verifies distributable skillpacks can be produced.
+- `node shared/scripts/build-dist.sh` or `node shared/scripts/skillpack-build.mjs --clean --out=dist --targets=codex,vscode,claude,cursor` verifies distributable skillpacks can be produced.
 
 ## Branches
 
 | Branch | Purpose |
 |--------|---------|
-| `main` | Tracks upstream `WordPress/agent-skills` |
-| `trunk` | Working branch with all fork additions |
-| Feature branches | PRs to upstream go from feature branches against `main` |
+| `trunk` | Default branch with upstream sync plus fork additions |
+| Feature branches | PRs, experiments, and fork-only work |
+| `upstream/trunk` | Upstream reference branch from WordPress/agent-skills |
 
 ## Compatibility
 
