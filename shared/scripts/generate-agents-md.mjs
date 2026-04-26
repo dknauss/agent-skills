@@ -26,8 +26,26 @@ const REPO_ROOT = path.resolve(__dirname, "../..");
 const SKILLS_DIR = path.join(REPO_ROOT, "skills");
 const DEFAULT_POLICIES_DIR = path.resolve(REPO_ROOT, "../.github/policies");
 
-// Category assignments — maps skill name to category.
-// Update this when adding new skills.
+const SHARED_SKILL_FALLBACKS = {
+  "github-repo": "Audits and improves GitHub repository quality — README structure, community health files, `.github` setup, issue/PR templates, metadata, releases, and branch hygiene.",
+  "github-profile": "Audits and optimizes GitHub profile pages — profile README, metadata fields, pinned repositories, stats widgets, and contribution visibility.",
+  "astro-seo": "Audits and improves Astro SEO — metadata, schema, Open Graph images, sitemaps, IndexNow, redirects, and performance defaults.",
+  "emdash-github-actions": "Sets up GitHub Actions CI/CD workflows for EmDash plugins — type-checking, ESLint, Vitest, npm security checks, and release publishing.",
+  "readability-check": "Runs a readability audit on prose for readers who use English as a second language and suggests concrete fixes.",
+};
+
+const SHARED_SKILLS = [
+  "github-repo",
+  "github-profile",
+  "astro-seo",
+  "emdash-github-actions",
+  "readability-check",
+  "code-mentor",
+  "cs-philosophy-review",
+];
+
+// Category assignments — maps WordPress skill name to category.
+// Update this when adding new WordPress skills.
 const CATEGORIES = {
   "WordPress Development": [
     "wordpress-router",
@@ -41,6 +59,7 @@ const CATEGORIES = {
     "wpds",
   ],
   "Operations and Tooling": [
+    "blueprint",
     "wp-wpcli-and-ops",
     "wp-phpstan",
     "wp-playground",
@@ -67,10 +86,6 @@ const CATEGORIES = {
     "studio",
     "studio-xdebug",
     "local-studio-env",
-  ],
-  "Developer Tools": [
-    "github-repo",
-    "github-profile",
   ],
 };
 
@@ -197,21 +212,37 @@ function generate(skills, policies) {
 
   lines.push("## Scope");
   lines.push("");
-  lines.push("Apply these instructions only when the current repository is WordPress-related.");
-  lines.push("Treat a repository as WordPress-related if at least one condition matches:");
+  lines.push("Apply these instructions to repositories under `/Users/danknauss/Developer/GitHub`.");
+  lines.push("");
+  lines.push("WordPress-specific sections apply only when the current repository is WordPress-related. Treat a repository as WordPress-related if at least one condition matches:");
   lines.push("- Repository name contains `wordpress` or starts with `wp-`.");
   lines.push("- Repository contains WordPress indicators such as `wp-config.php`, `wp-content/`, plugin headers, `block.json`, or `theme.json`.");
   lines.push("");
-  lines.push("If the repository is not WordPress-related, ignore this file.");
-  lines.push("");
   lines.push("## Skills");
   lines.push("");
-  lines.push("A skill is a local instruction set stored in a `SKILL.md` file. The canonical source for all WordPress agent skills is `agent-skills/` (fork of WordPress/agent-skills). Individual repos should not ship their own skill definitions — they consume skills from agent-skills.");
+  lines.push("A skill is a local instruction set stored in a `SKILL.md` file.");
   lines.push("");
-  lines.push("### Available WordPress skills");
+  lines.push("### Shared skills for all repos");
+  lines.push("");
+  lines.push("These skills are available across all repositories in this workspace:");
 
   // Track which skills we've listed so we can warn about uncategorized ones
   const listed = new Set();
+
+  for (const name of SHARED_SKILLS) {
+    const desc = skills.get(name) || SHARED_SKILL_FALLBACKS[name];
+    if (!desc) {
+      process.stderr.write(`Warning: shared skill '${name}' is not available from skills/ and has no fallback description\n`);
+      continue;
+    }
+    lines.push(`- \`${name}\`: ${desc}`);
+    listed.add(name);
+  }
+
+  lines.push("");
+  lines.push("### WordPress skills");
+  lines.push("");
+  lines.push("For WordPress-related repositories, the canonical source for WordPress agent skills is `agent-skills/` (fork of `WordPress/agent-skills`). Individual repos should not ship their own WordPress skill definitions — they consume shared skills from `agent-skills`.");
 
   for (const [category, skillNames] of Object.entries(CATEGORIES)) {
     lines.push("");
@@ -238,7 +269,10 @@ function generate(skills, policies) {
   lines.push("### Trigger rules");
   lines.push("- If a user names a skill (for example `$wp-rest-api`) or the task clearly matches a skill description, use that skill.");
   lines.push("- Use the smallest set of skills needed for the task.");
-  lines.push("- Prefer `wordpress-router` first when the correct WordPress specialist skill is not obvious.");
+  lines.push("- Prefer `wordpress-router` first when the repository is WordPress-related and the correct specialist skill is not obvious.");
+  lines.push("- Use `readability-check` for prose-quality work when the user asks for readability review or when another skill explicitly calls for it.");
+  lines.push("- Use `code-mentor` before implementing or substantially changing code when the user wants explanation, teaching, or stronger design justification.");
+  lines.push("- Use `cs-philosophy-review` for deeper design critique, simplicity review, or first-principles programming judgment.");
   lines.push("- Do not carry skills across turns unless they are re-mentioned or clearly required by the new request.");
   lines.push("");
   lines.push("### Coordination");
@@ -254,7 +288,7 @@ function generate(skills, policies) {
     lines.push("");
     lines.push("## Policies");
     lines.push("");
-    lines.push("These behavioral rules apply to all agents working in WordPress repos. Non-overridable policies cannot be weakened by per-repo configuration.");
+    lines.push("These behavioral rules apply to all agents working in this workspace. Non-overridable policies cannot be weakened by per-repo configuration.");
     for (const policy of policies) {
       lines.push("");
       lines.push(policy.body);
