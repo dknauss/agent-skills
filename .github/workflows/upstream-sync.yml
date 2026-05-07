@@ -21,9 +21,19 @@ jobs:
       - name: Update indices
         run: node shared/scripts/update-upstream-indices.mjs
 
+      - name: Verify PR automation token
+        env:
+          PR_AUTOMATION_TOKEN: ${{ secrets.PR_AUTOMATION_TOKEN }}
+        run: |
+          if [ -z "${PR_AUTOMATION_TOKEN}" ]; then
+            echo "::error::Missing PR_AUTOMATION_TOKEN secret. Configure a PAT with repo and workflow scopes so automation-created PRs trigger pull_request CI."
+            exit 1
+          fi
+
       - name: Create PR if changed
         uses: peter-evans/create-pull-request@v6
         with:
+          token: ${{ secrets.PR_AUTOMATION_TOKEN }}
           commit-message: "chore: refresh upstream indices"
           title: "chore: refresh upstream indices"
           body: |
