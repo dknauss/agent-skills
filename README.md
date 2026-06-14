@@ -28,7 +28,7 @@ This fork keeps the upstream WordPress foundation, then layers in repo hygiene, 
 
 | Source | Skills | Notes |
 |--------|--------|-------|
-| [WordPress/agent-skills](https://github.com/WordPress/agent-skills) | 14 upstream skills from [WordPress.com](https://github.com/WordPress/) including `blueprint` | Synced in from `upstream/trunk`, then adapted in this fork where needed. |
+| [WordPress/agent-skills](https://github.com/WordPress/agent-skills) | 17 upstream skills from [WordPress.com](https://github.com/WordPress/) including `blueprint`, `wp-abilities-audit`, `wp-abilities-verify`, and `wp-plugin-directory-guidelines` | Synced in from `upstream/trunk`, then adapted in this fork where needed. |
 | [jdevalk/skills](https://github.com/jdevalk/skills) | wp-github-actions, wp-readme-optimizer, github-repo, github-profile | Adapted from [Joost de Valk](https://github.com/jdevalk/). |
 | [elvismdev/claude-wordpress-skills](https://github.com/elvismdev/claude-wordpress-skills) | wp-performance-review | Adapted from [Elvis Morales](https://github.com/elvismdev); ported and adapted. |
 | This fork | wp-accessibility, wp-performance, wp-secure-code, wp-vip-standards, security-researcher, wordpress-security-doc-editor, wordpress-runbook-ops, studio, studio-xdebug, local-studio-env | Original skills by Dan Knauss and the robots. |
@@ -47,6 +47,8 @@ This fork keeps the upstream WordPress foundation, then layers in repo hygiene, 
 | **wp-rest-api** | REST API routes/endpoints, schema, auth, and response shaping |
 | **wp-interactivity-api** | Frontend interactivity with `data-wp-*` directives and stores |
 | **wp-abilities-api** | Capability-based permissions and REST API authentication |
+| **wp-abilities-audit** | Audit a plugin's REST surface and propose Abilities API registrations |
+| **wp-abilities-verify** | Verify a plugin's Abilities API registrations against their declared annotations |
 | **wpds** | WordPress Design System components and tokens |
 | **blueprint** | WordPress Playground Blueprints for declarative Playground environment setup |
 
@@ -58,6 +60,7 @@ This fork keeps the upstream WordPress foundation, then layers in repo hygiene, 
 | **wp-phpstan** | PHPStan static analysis for WordPress projects |
 | **wp-playground** | WordPress Playground for instant local environments |
 | **wp-github-actions** | GitHub Actions CI/CD for WP plugins: WPCS, PHPUnit, PHPStan, Playground previews, deploy to .org |
+| **wp-plugin-directory-guidelines** | WordPress Plugin Directory guideline review: naming, GPL compatibility, compliance checks |
 | **wp-readme-optimizer** | Audit and rewrite WordPress.org plugin readme.txt for visibility and conversions |
 
 ### Accessibility
