@@ -1,6 +1,6 @@
 # Agent Skills for WordPress
 
-[![CI](https://github.com/dknauss/agent-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/dknauss/agent-skills/actions/workflows/ci.yml) [![License](https://img.shields.io/github/license/dknauss/agent-skills)](LICENSE) [![Latest Tag](https://img.shields.io/github/v/tag/dknauss/agent-skills)](https://github.com/dknauss/agent-skills/tags)
+[![CI](https://github.com/dknauss/agent-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/dknauss/agent-skills/actions/workflows/ci.yml) [![License: GPL-2.0-or-later](https://img.shields.io/badge/License-GPL--2.0--or--later-blue.svg)](LICENSE) [![Skills](https://img.shields.io/badge/skills-136-7c3aed.svg)](skills/) [![Docs](https://img.shields.io/badge/docs-available-0a7ea4.svg)](docs/) [![AI Authorship](https://img.shields.io/badge/AI%20authorship-disclosed-8a63d2.svg)](docs/ai-authorship.md)
 
 **Teach AI coding assistants how to build WordPress the right way.**
 
