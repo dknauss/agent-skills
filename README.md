@@ -1,5 +1,7 @@
 # Agent Skills for WordPress
 
+[![CI](https://github.com/dknauss/agent-skills/actions/workflows/ci.yml/badge.svg)](https://github.com/dknauss/agent-skills/actions/workflows/ci.yml) [![License](https://img.shields.io/github/license/dknauss/agent-skills)](LICENSE) [![Latest Tag](https://img.shields.io/github/v/tag/dknauss/agent-skills)](https://github.com/dknauss/agent-skills/tags)
+
 **Teach AI coding assistants how to build WordPress the right way.**
 
 Agent Skills are portable bundles of instructions, checklists, and scripts that help AI assistants (Claude, Copilot, Codex, Cursor, etc.) understand WordPress development patterns, avoid common mistakes, and follow best practices.
