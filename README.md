@@ -6,7 +6,7 @@ Agent Skills are portable bundles of instructions, checklists, and scripts that 
 
 > **AI Authorship Disclosure:** The upstream WordPress skills were generated using GPT-5.2 Codex (High Reasoning) from official Gutenberg and WordPress documentation, then reviewed and edited by WordPress contributors. This fork extends that base with additional Dan Knauss and third-party skills for WordPress operations, security, local environment management, and GitHub workflows. See [docs/ai-authorship.md](docs/ai-authorship.md) in upstream for the original disclosure context.
 
-[![CI](https://github.com/dknauss/agent-skills/actions/workflows/ci.yml/badge.svg?branch=trunk)](https://github.com/dknauss/agent-skills/actions/workflows/ci.yml)
+[![CI](https://github.com/dknauss/agent-skills/actions/workflows/ci.yml/badge.svg?branch=trunk)](https://github.com/dknauss/agent-skills/actions/workflows/ci.yml) [![Security Policy](https://img.shields.io/badge/security-policy-4c1)](SECURITY.md)
 [![Release](https://img.shields.io/github/v/release/dknauss/agent-skills)](https://github.com/dknauss/agent-skills/releases/latest)
 [![License: GPL-2.0-or-later](https://img.shields.io/badge/License-GPL--2.0--or--later-0f7c6b.svg)](LICENSE)
 
