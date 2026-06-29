@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Update upstream indices
         run: node shared/scripts/update-upstream-indices.mjs
@@ -62,7 +62,7 @@ jobs:
   # Step 2: Run AI analysis and generate updates
   generate-updates:
     needs: refresh-indices
-    if: needs.refresh-indices.outputs.has_index_changes == 'true' || github.event.inputs.force == 'true'
+    if: (needs.refresh-indices.outputs.has_index_changes == 'true' || github.event.inputs.force == 'true') && secrets.ANTHROPIC_API_KEY != ''
     runs-on: ubuntu-latest
     outputs:
       has_skill_updates: ${{ steps.generate.outputs.has_updates }}
@@ -75,7 +75,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Install dependencies
         run: npm install @anthropic-ai/sdk
@@ -116,7 +116,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Run validation
         run: node eval/harness/run.mjs
