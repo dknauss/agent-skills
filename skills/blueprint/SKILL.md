@@ -67,6 +67,14 @@ Resources tell Playground where to find files. Used by `installPlugin`, `install
 
 ### git:directory — Installing from GitHub
 
+> **⚠️ BROKEN in the hosted browser Playground (playground.wordpress.net) as of 2026-07.**
+> `git:directory` fails at the install step with `createHash is not a function` (a Node
+> `crypto.createHash` reaching un-polyfilled browser code; the minified id varies —
+> `Fw`/`Ow`/`Vo`). It hits **every** `git:directory` demo regardless of build step, and also
+> any `resource:"url"` pointing at `github-proxy.com` (git-detected → same code path). WordPress
+> boots fine; only the install dies. **Do not use `git:directory` for any hosted "Try in
+> Playground" demo or PR-preview.** It may still work in the local `@wp-playground/cli` runtime.
+
 ```json
 {
   "resource": "git:directory",
@@ -79,6 +87,14 @@ Resources tell Playground where to find files. Used by `installPlugin`, `install
 
 - When using a branch or tag name for `ref`, you **must** set `refType` (`"branch"` | `"tag"` | `"commit"` | `"refname"`). Without it, only `"HEAD"` resolves reliably.
 - `path` selects a subdirectory (defaults to repo root).
+
+**Workaround for a GitHub-hosted demo → install a `.zip` via `resource:"url"` through the
+official CORS proxy** (see *Installing from GitHub in the browser* below). A **direct**
+`github.com/OWNER/REPO/archive/<ref>.zip` is NOT usable either: GitHub serves archive zips with
+`Access-Control-Allow-Origin: https://render.githubusercontent.com` (a fixed origin), so a
+client-side fetch from `playground.wordpress.net` is CORS-blocked. CORS-permissive sources that
+work: `wordpress-playground-cors-proxy.net/?<url>`, `raw.githubusercontent.com` (single files),
+`downloads.wordpress.org`, and `wordpress.org/plugins`.
 
 ### literal:directory — Inline File Trees
 
@@ -252,20 +268,82 @@ Then activate it with a separate step:
 { "step": "activatePlugin", "pluginPath": "my-plugin/my-plugin.php" }
 ```
 
-### Plugin from a GitHub branch
+### Installing from GitHub in the browser (hosted demos & PR previews)
+
+`git:directory` is **broken in the hosted browser Playground** (see the Resource References
+warning). For any repo-hosted "Try in Playground" link, install a `.zip` via `resource:"url"`
+wrapped in the official CORS proxy.
+
+**Track a branch (bleeding edge) — GitHub source archive via the proxy:**
 
 ```json
 {
   "step": "installPlugin",
   "pluginData": {
-    "resource": "git:directory",
-    "url": "https://github.com/user/repo",
-    "ref": "feature-branch",
-    "refType": "branch",
-    "path": "/"
-  }
+    "resource": "url",
+    "url": "https://wordpress-playground-cors-proxy.net/?https://github.com/user/repo/archive/refs/heads/main.zip"
+  },
+  "options": { "activate": true, "targetFolderName": "my-plugin" }
 }
 ```
+
+The source archive extracts to a `repo-main/` folder containing the whole repo; `targetFolderName`
+renames it to a clean plugin dir. For a **build-required** plugin (compiles JS/CSS, Composer
+autoload) the raw source archive ships un-built code — install a CI-built zip instead.
+
+**Cleaner, and required for build-required plugins — a rolling CI-built demo asset.** A tiny
+`on: push: [main]` workflow builds the runtime-only plugin zip and uploads it under a fixed name
+to a rolling **prerelease** tag (e.g. `playground-demo`), then the blueprint installs
+`.../releases/download/playground-demo/PLUGIN.zip` via the proxy — a stable, always-latest,
+byte-identical package. Mark the release **prerelease** so it doesn't hijack
+`/releases/latest/download/` (which a *stable*-release demo would use). This is the pattern the
+`dknauss/dirtbag` and `dknauss/Maestro` repos use.
+
+The whole workflow — build the runtime zip, upsert it on a fixed prerelease tag:
+
+```yaml
+# .github/workflows/playground-demo.yml — rolling clean demo asset
+name: Playground demo asset
+on:
+  push:
+    branches: [main]
+    paths: ['**.php', 'includes/**', 'assets/**', 'readme.txt', 'bin/build.sh']
+  workflow_dispatch:
+permissions:
+  contents: write            # required to create/upload the release
+concurrency:                 # a fast push shouldn't race an in-flight publish
+  group: playground-demo
+  cancel-in-progress: true
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build clean plugin ZIP
+        run: |
+          bash bin/build.sh                 # produces build/PLUGIN.zip (runtime-only)
+          unzip -tq build/PLUGIN.zip        # fail fast if the archive is corrupt
+      - name: Publish rolling demo asset
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          if gh release view playground-demo >/dev/null 2>&1; then
+            gh release upload playground-demo build/PLUGIN.zip --clobber   # replace in place
+          else
+            gh release create playground-demo build/PLUGIN.zip --prerelease \
+              --title "Playground demo (rolling main build)" \
+              --notes "Auto-built from main. Not a real release; rebuilt on every push."
+          fi
+```
+
+Key details: `--clobber` replaces the asset under the same URL (the whole point — the blueprint
+URL never changes); `--prerelease` on first create keeps it off `/releases/latest/`; `permissions:
+contents: write` is required or `gh release` 403s; `bin/build.sh` is your existing `.distignore`-style
+packager (the demo installs the *same* zip real users get). Gate `paths:` to plugin sources so
+doc-only pushes don't rebuild. No such build step? A no-build plugin can install the CORS-proxied
+source archive directly (above) — this workflow is for build-required or bloat-free-install cases.
+
+**Pin to a released version (stable demo):** `wordpress.org/plugins` slug if published, else a
+CI-built **release asset** — `.../releases/latest/download/PLUGIN.zip` via the proxy.
 
 ## Common Mistakes
 
@@ -277,7 +355,8 @@ Then activate it with a separate step:
 | Path separators in `files` keys | Use nested objects for subdirectories |
 | `runPHP` without `wp-load.php` | Always `require '/wordpress/wp-load.php';` for WP functions |
 | Invented top-level keys | Only documented keys work — schema rejects unknown properties |
-| Inventing proxy URLs for GitHub | Use `git:directory` resource type |
+| `git:directory` for a **hosted** demo/PR-preview | Broken in browser (`createHash`) — use a `.zip` `url` via `wordpress-playground-cors-proxy.net/?<url>` |
+| Direct `github.com/.../archive/<ref>.zip` as a `url` | CORS-blocked — wrap it in `wordpress-playground-cors-proxy.net/?<url>` |
 | Omitting `refType` with branch/tag `ref` | Required — only `"HEAD"` works without it |
 | Resource references in `literal:directory` `files` values | Values must be plain strings (content) or objects (subdirectories) — never resource refs |
 | `features.debug` or other invented feature keys | `features` only supports `networking` and `intl` — use `constants: { "WP_DEBUG": true }` for debug mode |
