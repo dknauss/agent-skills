@@ -74,6 +74,9 @@ Resources tell Playground where to find files. Used by `installPlugin`, `install
 > any `resource:"url"` pointing at `github-proxy.com` (git-detected → same code path). WordPress
 > boots fine; only the install dies. **Do not use `git:directory` for any hosted "Try in
 > Playground" demo or PR-preview.** It may still work in the local `@wp-playground/cli` runtime.
+> Tracked at [wordpress-playground#3875](https://github.com/WordPress/wordpress-playground/issues/3875)
+> (regression from Playground PR #3841) — when that issue closes, remove this warning and
+> re-allow `git:directory` for hosted demos.
 
 ```json
 {
@@ -355,7 +358,7 @@ CI-built **release asset** — `.../releases/latest/download/PLUGIN.zip` via the
 | Path separators in `files` keys | Use nested objects for subdirectories |
 | `runPHP` without `wp-load.php` | Always `require '/wordpress/wp-load.php';` for WP functions |
 | Invented top-level keys | Only documented keys work — schema rejects unknown properties |
-| `git:directory` for a **hosted** demo/PR-preview | Broken in browser (`createHash`) — use a `.zip` `url` via `wordpress-playground-cors-proxy.net/?<url>` |
+| `git:directory` for a **hosted** demo/PR-preview | Broken in browser (`createHash`, [wordpress-playground#3875](https://github.com/WordPress/wordpress-playground/issues/3875)) — use a `.zip` `url` via `wordpress-playground-cors-proxy.net/?<url>` |
 | Direct `github.com/.../archive/<ref>.zip` as a `url` | CORS-blocked — wrap it in `wordpress-playground-cors-proxy.net/?<url>` |
 | Omitting `refType` with branch/tag `ref` | Required — only `"HEAD"` works without it |
 | Resource references in `literal:directory` `files` values | Values must be plain strings (content) or objects (subdirectories) — never resource refs |
