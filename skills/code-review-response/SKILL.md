@@ -1,7 +1,7 @@
 ---
 name: code-review-response
 description: Use when a pull request has automated code-review comments (Codex, Copilot, or similar) to triage and respond to, when deciding whether and how deeply a PR should be reviewed based on risk, or when a repo tracks canonical metrics (docs/current-metrics.md) that a change may drift. Triggers on Codex/Copilot findings, P1/P2/P3 review alerts, review-response, "merge past reviewer", and metrics-drift.
-compatibility: "Any GitHub repo; the metrics section assumes a docs/current-metrics.md convention. gh CLI required."
+compatibility: "Targets WordPress 6.9+ (PHP 7.2.24+). Works in GitHub repositories that use pull requests and automated review comments. The canonical-metrics section assumes a docs/current-metrics.md convention. gh CLI required."
 ---
 
 # Code Review Response & Canonical Metrics
