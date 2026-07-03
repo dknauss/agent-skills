@@ -52,6 +52,7 @@ jobs:
     permissions:
       # The action needs permission `write` permission for PRs in order to add a comment.
       pull-requests: write
+      issues: read
       contents: read
     timeout-minutes: 20
     # The job will run when pull requests are open, ready for review and:
@@ -70,10 +71,88 @@ jobs:
       ( ! github.event.pull_request.draft && github.event.pull_request.state == 'open' || ! github.event.issue.draft && github.event.issue.state == 'open' )
 
     steps:
+      - name: Detect unsupported Codex bot activity
+        id: codex-bot-guard
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          retries: 2
+          retry-exempt-status-codes: 418
+          script: |
+            // Temporary repo-side mitigation for WordPress/props-bot-action user-resolution failures.
+            // See https://github.com/WordPress/props-bot-action/issues/232
+            const pullNumber =
+              context.payload.pull_request?.number ??
+              context.payload.issue?.number;
+
+            if ( ! pullNumber ) {
+              core.setOutput( 'skip', 'false' );
+              return;
+            }
+
+            const normalizeLogin = ( login = '' ) =>
+              login.toLowerCase().replace( /\[bot\]$/, '' );
+            const unsupportedLogin = 'chatgpt-codex-connector';
+
+            const [ reviews, reviewComments, issueComments ] = await Promise.all( [
+              github.paginate( github.rest.pulls.listReviews, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pullNumber,
+                per_page: 100,
+              } ),
+              github.paginate( github.rest.pulls.listReviewComments, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pullNumber,
+                per_page: 100,
+              } ),
+              github.paginate( github.rest.issues.listComments, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pullNumber,
+                per_page: 100,
+              } ),
+            ] );
+
+            const actorLogins = [
+              context.actor,
+              ...[ ...reviews, ...reviewComments, ...issueComments ].map(
+                ( item ) => item.user?.login
+              ),
+            ].filter( Boolean );
+
+            const unsupportedActors = [
+              ...new Set(
+                actorLogins.filter(
+                  ( login ) => normalizeLogin( login ) === unsupportedLogin
+                )
+              ),
+            ];
+
+            if ( unsupportedActors.length ) {
+              core.warning(
+                `Skipping Props Bot because WordPress/props-bot-action cannot resolve ${ unsupportedActors.join( ', ' ) }.`
+              );
+              core.setOutput( 'skip', 'true' );
+              core.setOutput( 'actors', unsupportedActors.join( ', ' ) );
+              return;
+            }
+
+            core.setOutput( 'skip', 'false' );
+
       - name: Gather a list of contributors
+        if: ${{ steps.codex-bot-guard.outputs.skip != 'true' }}
         uses: WordPress/props-bot-action@trunk
         with:
           format: 'git'
+
+      - name: Note skipped Props Bot run
+        if: ${{ steps.codex-bot-guard.outputs.skip == 'true' }}
+        run: |
+          echo "Skipped Props Bot because upstream cannot resolve: $UNSUPPORTED_ACTORS"
+          echo "See https://github.com/WordPress/props-bot-action/issues/232"
+        env:
+          UNSUPPORTED_ACTORS: ${{ steps.codex-bot-guard.outputs.actors }}
 
       - name: Remove the props-bot label
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
