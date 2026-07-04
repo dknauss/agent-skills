@@ -494,3 +494,18 @@ npx @wp-playground/cli run-blueprint --blueprint=./my-bundle/ --blueprint-may-re
 ### Testing with the wordpress-playground-server Skill
 
 Use the `wordpress-playground-server` skill to start a local Playground instance with `--blueprint /path/to/blueprint.json`, then verify the expected state with Playwright MCP. For directory bundles, pass `--blueprint-may-read-adjacent-files` as an extra argument.
+
+### Verifying a hosted demo (live browser)
+
+For a demo delivered as a hosted URL (`playground.wordpress.net/#{…}` or `?blueprint-url=…`) — a "Try in Playground" badge, a PR-preview link — load it in a real browser (Playwright MCP / headless Chromium) and confirm it actually works. **A blueprint that parses is not a blueprint that runs** — the install step can still fail at fetch (CORS) or in the git path (`createHash`).
+
+**Pass criteria (all three):**
+
+1. The blueprint's `landingPage` renders (e.g. land on `/wp-admin/plugins.php` or `/themes.php`).
+2. The plugin/theme is **Active** — read it from the page, not assumed. The WP site runs in a **nested** Playground iframe, so recurse child frames to reach `plugins.php`/`themes.php` (a top-level `document.querySelector` sees only the Playground shell).
+3. **Zero** blueprint-relevant console errors: no `createHash is not a function`, no `blocked by CORS policy`, no `BlueprintStepExecutionError`. (The service-worker/storage `AbortError` is benign Playground boot noise — ignore it.)
+
+**Gotchas:**
+
+- **The console buffer does NOT clear across hash-only `#{blueprint}` navigations.** Two `playground.wordpress.net/#…` loads that differ only in the fragment share one console, so you'll read the *previous* run's errors and misjudge the current one. Force a full reload (navigate to `about:blank`, then to the demo URL) between tests.
+- Playground boots lazily and installs take time — wait for the landing page to actually render (poll/allow ~30–45 s) before reading state or the console.
