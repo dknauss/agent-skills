@@ -67,13 +67,15 @@ Resources tell Playground where to find files. Used by `installPlugin`, `install
 
 ### git:directory — Installing from GitHub
 
-> **⚠️ BROKEN in the hosted browser Playground (playground.wordpress.net) as of 2026-07.**
-> `git:directory` fails at the install step with `createHash is not a function` (a Node
-> `crypto.createHash` reaching un-polyfilled browser code; the minified id varies —
-> `Fw`/`Ow`/`Vo`). It hits **every** `git:directory` demo regardless of build step, and also
-> any `resource:"url"` pointing at `github-proxy.com` (git-detected → same code path). WordPress
-> boots fine; only the install dies. **Do not use `git:directory` for any hosted "Try in
-> Playground" demo or PR-preview.** It may still work in the local `@wp-playground/cli` runtime.
+> **Known issue (2026-07):** `git:directory` currently fails in the *hosted browser* runtime
+> (playground.wordpress.net) with `createHash is not a function` — a Node `crypto.createHash`
+> reaching un-polyfilled browser code (regression from Playground PR #3841; the minified id
+> varies, `Fw`/`Ow`/`Vo`). It affects every hosted `git:directory` install regardless of build
+> step, plus any `resource:"url"` pointing at `github-proxy.com` (git-detected → same path);
+> WordPress still boots, only the install dies. Local `@wp-playground/cli` is unaffected. Tracked
+> at [wordpress-playground#3875](https://github.com/WordPress/wordpress-playground/issues/3875),
+> fix in flight ([#3882](https://github.com/WordPress/wordpress-playground/pull/3882)). Until it
+> lands, prefer the release-ZIP path below for hosted demos. **Remove this note when #3875 closes.**
 
 ```json
 {
@@ -88,9 +90,11 @@ Resources tell Playground where to find files. Used by `installPlugin`, `install
 - When using a branch or tag name for `ref`, you **must** set `refType` (`"branch"` | `"tag"` | `"commit"` | `"refname"`). Without it, only `"HEAD"` resolves reliably.
 - `path` selects a subdirectory (defaults to repo root).
 
-**Workaround for a GitHub-hosted demo → install a `.zip` via `resource:"url"` through the
-official CORS proxy** (see *Installing from GitHub in the browser* below). A **direct**
-`github.com/OWNER/REPO/archive/<ref>.zip` is NOT usable either: GitHub serves archive zips with
+**Installing from a `.zip` instead (durable alternative).** A prebuilt `.zip` via `resource:"url"`
+through the official CORS proxy is often the better choice for a hosted demo anyway — it's required
+for build-required plugins (a git source archive ships un-built code) and gives byte-identical
+release testing (see *Installing from GitHub in the browser* below). A **direct**
+`github.com/OWNER/REPO/archive/<ref>.zip` is NOT usable client-side: GitHub serves archive zips with
 `Access-Control-Allow-Origin: https://render.githubusercontent.com` (a fixed origin), so a
 client-side fetch from `playground.wordpress.net` is CORS-blocked. CORS-permissive sources that
 work: `wordpress-playground-cors-proxy.net/?<url>`, `raw.githubusercontent.com` (single files),
@@ -270,9 +274,11 @@ Then activate it with a separate step:
 
 ### Installing from GitHub in the browser (hosted demos & PR previews)
 
-`git:directory` is **broken in the hosted browser Playground** (see the Resource References
-warning). For any repo-hosted "Try in Playground" link, install a `.zip` via `resource:"url"`
-wrapped in the official CORS proxy.
+For a repo-hosted "Try in Playground" link, install a `.zip` via `resource:"url"` wrapped in the
+official CORS proxy. This is the most robust option for hosted demos: it works for build-required
+plugins (a git source archive ships un-built code) and installs the exact package real users get.
+(It is also the current necessity while the hosted-browser `git:directory` regression is fixed —
+see the Known-issue note under *git:directory* above.)
 
 **Track a branch (bleeding edge) — GitHub source archive via the proxy:**
 
@@ -355,7 +361,6 @@ CI-built **release asset** — `.../releases/latest/download/PLUGIN.zip` via the
 | Path separators in `files` keys | Use nested objects for subdirectories |
 | `runPHP` without `wp-load.php` | Always `require '/wordpress/wp-load.php';` for WP functions |
 | Invented top-level keys | Only documented keys work — schema rejects unknown properties |
-| `git:directory` for a **hosted** demo/PR-preview | Broken in browser (`createHash`) — use a `.zip` `url` via `wordpress-playground-cors-proxy.net/?<url>` |
 | Direct `github.com/.../archive/<ref>.zip` as a `url` | CORS-blocked — wrap it in `wordpress-playground-cors-proxy.net/?<url>` |
 | Omitting `refType` with branch/tag `ref` | Required — only `"HEAD"` works without it |
 | Resource references in `literal:directory` `files` values | Values must be plain strings (content) or objects (subdirectories) — never resource refs |
