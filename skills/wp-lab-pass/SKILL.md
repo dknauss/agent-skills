@@ -185,7 +185,9 @@ This is the step that earns the lab. For each behaviour, check the artefact:
 
 Write results in the project, keeping reusable instructions in this skill. Use
 the [evidence template](references/evidence-template.md). Record unperformed
-checks explicitly.
+checks explicitly. Use a new output artifact for each run so previous evidence
+survives. Assert the expected status for each request path; investigate unexpected
+500 responses rather than broadening accepted codes to include them.
 
 Restore the exact options and scope saved before setup, revoke created sessions,
 and delete only users, wrappers and captures created by this pass. Verify cleanup
