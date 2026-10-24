@@ -1,0 +1,20 @@
+{
+  "name": "Verify authorization on an existing disposable WordPress lab",
+  "skills": ["wp-lab-pass"],
+  "query": "Use my already-running disposable single-site and multisite labs to verify an admin action. They have existing users and settings. Test a delegated user, invalid nonce and an authorized control, then clean up. A wrapper can mint a WordPress session; login itself is outside scope.",
+  "expected_behavior": [
+    "Record source path/revision, local targets and original running state before mutation",
+    "Snapshot scoped settings and create uniquely identified fixture users without exposing credentials",
+    "Use real HTTP requests and WordPress nonce/capability checks; declare any delegated capability fixture",
+    "Prove the observer with an authorized control before accepting zero side effects on denied requests",
+    "Record minted-session limits rather than claiming an actual login test",
+    "Restore prior settings, revoke fixture sessions and remove only this pass's users and files",
+    "Leave previously running labs running and preserve all unrelated users and files"
+  ],
+  "success_criteria": [
+    "No fixed password, cookie, nonce or authorization header appears in recorded evidence",
+    "Authorization results include actual response and scoped side-effect checks",
+    "Cleanup targets are exact and owned by this pass; no whole-environment destruction",
+    "Reusable guidance and project-specific results remain separate"
+  ]
+}
