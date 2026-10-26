@@ -41,16 +41,17 @@ Gather before starting:
 
 ### 1. Point a real site at the branch
 
-Symlink the plugin from the repository into the lab's `wp-content/plugins/`,
-never copy it, and never keep source inside the site directory:
+Identify the local URL, directory, activation scope, current symlink target and
+whether the site was already running. Confirm it is disposable before mutating it.
+Use the runner's supported tools; when Studio tools are available, use those for
+site management and WP-CLI. Do not infer remote-write authority from a lab task.
 
-```bash
-cd ~/Sites/mylab/wp-content/plugins
-rm plugin-slug
-ln -s /path/to/repo/worktree plugin-slug
-```
+Prefer a symlink to the checkout. Inspect an existing destination before replacing
+it; preserve real directories and existing work. Record the resolved source file
+path and commit. If the runner cannot mount symlinks, use a built package and
+record its checksum and source revision.
 
-**Restart the site afterwards.** Studio (and some other runners) mount symlinks at
+**Restart after changing a mounted symlink.** Studio (and some other runners) mount symlinks at
 start; repoint one while the site is running and the plugin silently does not
 load. Then confirm the branch is actually live, rather than assuming:
 
@@ -80,7 +81,7 @@ this replaces an SMTP catcher and needs no install:
 <?php
 /**
  * Plugin Name: Lab mail capture
- * Description: Records wp_mail() arguments to a JSON lines file. Lab use only.
+ * Description: Counts intercepted lab mail without retaining its payload.
  */
 
 define( 'LAB_CAPTURE_FLAG', WP_CONTENT_DIR . '/lab-capture-on' );
@@ -91,7 +92,7 @@ if ( file_exists( LAB_CAPTURE_FLAG ) ) {
 	add_filter(
 		'pre_wp_mail',
 		static function ( $pre, $atts ) {
-			lab_capture_record( 'sent', $atts );
+			lab_capture_record( 'intercepted' );
 
 			return true;
 		},
@@ -104,20 +105,14 @@ if ( file_exists( LAB_CAPTURE_FLAG ) ) {
  * Append one record.
  *
  * @param string $outcome What happened.
- * @param array  $atts    wp_mail() arguments.
  */
-function lab_capture_record( $outcome, $atts ) {
+function lab_capture_record( $outcome ) {
 	file_put_contents(
 		LAB_CAPTURE_LOG,
 		wp_json_encode(
 			[
 				'time'        => gmdate( 'c' ),
 				'outcome'     => $outcome,
-				'to'          => $atts['to'] ?? null,
-				'subject'     => $atts['subject'] ?? null,
-				'headers'     => $atts['headers'] ?? null,
-				'attachments' => $atts['attachments'] ?? null,
-				'message'     => $atts['message'] ?? null,
 			]
 		) . "\n",
 		FILE_APPEND
@@ -125,10 +120,16 @@ function lab_capture_record( $outcome, $atts ) {
 }
 ```
 
-Hook placement is the whole game. `pre_wp_mail` short-circuits before the send, so
-a capture there stands in for the mail server. The `wp_mail` filter runs *after*
-any short-circuit, so a plugin that suppresses mail never reaches it — which makes
-absence from the log positive evidence that nothing was sent.
+Restrict fixtures to an explicitly enabled disposable local site. Keep captures
+outside publicly served paths where possible, with restrictive permissions. Never
+retain passwords, cookies, nonces, authorization headers or real message bodies.
+If recipients or payload shape matter, assert synthetic expected values in memory
+and record only pass/fail metadata.
+
+`pre_wp_mail` interception proves the transport boundary was reached, not that
+mail was delivered. `wp_mail` argument filtering precedes `pre_wp_mail`; order
+between callbacks on the same filter depends on priority. Demonstrate that the
+capture runs on a permitted control before treating its absence as suppression.
 
 ### 3. Make the environment states switchable
 
@@ -150,9 +151,10 @@ wp eval 'echo Your\\Plugin::suppresses_mail() ? "SUPPRESSING" : "not suppressing
 
 ### 4. Create real users for every role
 
-```bash
-wp user create labeditor labeditor@example.test --role=editor --user_pass=labpass1234
-```
+Create uniquely named disposable users with generated passwords held only in
+memory. Avoid fixed passwords and credentials in command arguments, logs or
+committed fixtures. Reuse existing sessions only when the runner supports it;
+record whether the lab exercised login itself or started with a minted session.
 
 **Check what actually persisted.** A plugin may store a role differently from how
 you assigned it — a custom role can be stored as a base role plus a marker, so a
@@ -194,16 +196,18 @@ This is the step that earns the lab. For each behaviour, check the artefact:
 
 ### 7. Record and tear down
 
-Write the result where the project keeps its verification record, including what
-was **not** run. Then remove the harness and stop what you started:
+Write results in the project, keeping reusable instructions in this skill. Use
+the [evidence template](references/evidence-template.md). Record unperformed
+checks explicitly. Use a new output artifact for each run so previous evidence
+survives. Assert the expected status for each request path; investigate unexpected
+500 responses rather than broadening accepted codes to include them.
 
-```bash
-rm wp-content/mu-plugins/lab-mail-capture.php wp-content/lab-mail-capture.jsonl
-npx wp-env destroy --config /path/to/config   # destroy, not stop
-```
-
-Repoint the plugin symlink back at its usual target and restart, so the next
-session does not inherit your branch.
+Restore the exact options and scope saved before setup, revoke created sessions,
+and delete only users, wrappers and captures created by this pass. Verify cleanup
+with read-only checks. Restore prior symlink targets when changed. Stop sites
+started for this pass; leave previously running sites running. Destroy an entire
+environment only if this pass created it exclusively and its exact target is
+confirmed disposable. Never turn an example cleanup command into a broad deletion.
 
 ## Verification
 
