@@ -59,6 +59,19 @@ load. Then confirm the branch is actually live, rather than assuming:
 wp eval 'echo class_exists("Your\\New\\Class") ? "branch loaded" : "NOT loaded";'
 ```
 
+**Run a baseline smoke gate before any behaviour check**, so a broken lab is not
+mistaken for a broken change: no PHP fatals in `debug.log`, no console errors on
+the screens you will drive, and `wp plugin list --format=json` matches the
+expected activation matrix. If the lab mounts third-party plugins from release
+zips, pin each one by version and SHA-256 so two passes compare the same code.
+
+**Need something a local runner can't give you** — Jetpack/WooCommerce trunk or
+beta builds, Gutenberg Nightly, a specific PHP 8.2–8.5, or a throwaway public
+URL? Jurassic Ninja (https://jurassic.ninja/) spins up a hosted site destroyed
+after 24 hours. It needs a WordPress.com login and has no CLI or API, so it
+cannot take a symlink: upload a zip of the branch and record its commit hash in
+the lab record.
+
 ### 2. Instrument the side effect
 
 Add a mu-plugin that records what the code hands to the outside world. For mail,
@@ -207,6 +220,12 @@ than rounding it up.
 
 - **The plugin silently does not load.** The symlink was repointed while the site
   was running. Restart, then assert a class from the branch exists.
+- **"Green" was the main checkout, not the branch.** Worktrees, Composer path
+  repos and autoloaders can resolve to the main checkout, so a pass proves
+  nothing about the branch. Assert something only the branch contains (step 1)
+  and fail hard if it is absent.
+- **A subagent says the lab passed.** Treat its report as a claim until you have
+  seen the artefact (capture file, `wp` output, CI run) yourself.
 - **The container cannot see your files.** Docker-backed runners often mount only
   `$HOME`; a package staged in the system temp directory is invisible. Stage it
   under `$HOME`.
