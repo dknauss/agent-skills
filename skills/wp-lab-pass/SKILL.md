@@ -198,7 +198,11 @@ This is the step that earns the lab. For each behaviour, check the artefact:
 
 Write results in the project, keeping reusable instructions in this skill. Use
 the [evidence template](references/evidence-template.md). Record unperformed
-checks explicitly. Use a new output artifact for each run so previous evidence
+checks explicitly, and fill in its **coverage matrix**: list every database
+engine, WordPress/PHP version, topology and object-cache state the code claims to
+support, and mark each PASS, FAIL, NOT RUN or N/A. Build the rows from the declared
+support surface, not from memory of what might matter, so an environment you never
+thought of still shows up as a hole rather than silence. Use a new output artifact for each run so previous evidence
 survives. Assert the expected status for each request path; investigate unexpected
 500 responses rather than broadening accepted codes to include them.
 
@@ -212,8 +216,9 @@ confirmed disposable. Never turn an example cleanup command into a broad deletio
 ## Verification
 
 A lab pass is complete when every behaviour on the list from "Inputs required"
-has an artefact behind it, and the record names anything that could not be
-checked. If you cannot show the evidence, the item is unverified — say so rather
+has an artefact behind it, every coverage-matrix cell is marked, and the record
+names anything that could not be checked. A green result on one engine or runner
+is a result for that cell only. If you cannot show the evidence, the item is unverified — say so rather
 than rounding it up.
 
 ## Failure modes / debugging
@@ -238,6 +243,12 @@ than rounding it up.
   Assert on the notice's own markup, not on where it sits.
 - **A role assignment does not stick.** See step 4; the plugin probably owns the
   assignment path.
+- **Green on SQLite, broken on MySQL (or the reverse).** Database drivers expose
+  different properties, functions and transaction behaviour. A capability probe
+  that the SQLite integration answers can be unsupported by `mysqli`, and a
+  conservative code path then fails closed on every request while looking like a
+  pass. Treat each engine as its own coverage cell; never let one stand in for
+  another.
 - **The test passed but the lab disagrees.** The test seeded state the plugin
   never persists. Fix the test's fixture first, watch it go red, then fix the code.
 
