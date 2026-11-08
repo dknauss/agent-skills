@@ -9,6 +9,9 @@
 - Session origin: actual login or minted WordPress session; never retain tokens.
 - Fixture effects: HTTP/mail interception, capability overrides, disabled jobs.
 - Findings, fixes, failing-before/passing-after evidence, artifact location.
+- Who wrote the probes. With a [separate tester](separate-tester.md): the probe
+  file and the commit that added it, an Author column (tester or implementer) on
+  every result, and the tester-probe tally (PASS, FAIL, DISPUTED, NOT RUN).
 - Coverage matrix (below), filled in before the pass is called complete.
 - Unperformed checks and limits, including any transport or filesystem interception.
 - Cleanup: restored options/scopes, removed users/sessions/fixtures, source mapping,
