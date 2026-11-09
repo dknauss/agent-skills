@@ -37,6 +37,15 @@ Gather before starting:
 5. **Which roles** must be checked, and whether the plugin assigns them in a
    non-obvious way.
 
+**Who writes the probes.** By default, the agent making the change also picks
+what to check. That's a conflict of interest. For authorization, auth, secrets,
+personal data, outbound mail or requests, destructive operations, or a release
+candidate, use a [separate tester](references/separate-tester.md): a different
+agent, ideally on a different model, commits the probe list before any code
+exists, and the implementer has to pass probes it never wrote. If a project's
+CI guards the probe file, a probe that changes after the build fails the pull
+request.
+
 ## Procedure
 
 ### 1. Point a real site at the branch
@@ -217,7 +226,8 @@ confirmed disposable. Never turn an example cleanup command into a broad deletio
 
 A lab pass is complete when every behaviour on the list from "Inputs required"
 has an artefact behind it, every coverage-matrix cell is marked, and the record
-names anything that could not be checked. A green result on one engine or runner
+names anything that could not be checked. With a separate tester, every tester probe also
+has a result, and none is FAIL, DISPUTED or NOT RUN. A green result on one engine or runner
 is a result for that cell only. If you cannot show the evidence, the item is unverified — say so rather
 than rounding it up.
 
@@ -229,6 +239,11 @@ than rounding it up.
   repos and autoloaders can resolve to the main checkout, so a pass proves
   nothing about the branch. Assert something only the branch contains (step 1)
   and fail hard if it is absent.
+- **The author only probed what it built.** Every check lines up with a code
+  path in the diff, and nothing tests the denied role or the suppressed state.
+  Bring in a [separate tester](references/separate-tester.md).
+- **The implementer "clarified" a tester probe.** That's editing it. Mark the
+  probe DISPUTED with a reason and leave it for a human.
 - **A subagent says the lab passed.** Treat its report as a claim until you have
   seen the artefact (capture file, `wp` output, CI run) yourself.
 - **The container cannot see your files.** Docker-backed runners often mount only
