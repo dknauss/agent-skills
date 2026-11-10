@@ -42,6 +42,9 @@ Agent Skills solve this by giving AI assistants **expert-level WordPress knowled
 | **blueprint** | WordPress Playground Blueprints for declarative Playground environment setup |
 | **code-mentor** | Explain the intended design before coding, then check the result stayed simple and on plan |
 | **cs-philosophy-review** | First-principles design critique: simplicity, deletion, abstraction restraint, explicit tradeoffs |
+| **wp-secure-code** | Secure WordPress PHP: sanitizing, escaping, nonces, capabilities, `$wpdb->prepare()`, REST permission callbacks, OWASP |
+| **wp-accessibility** | WCAG 2.2 AA for themes, plugins and blocks: semantics, focus, ARIA, `wp.a11y.speak()`, testing |
+| **wp-readme-optimizer** | Audit, score and rewrite a WordPress.org plugin readme.txt for a better directory listing |
 
 ## How It Works
 
