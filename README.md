@@ -36,9 +36,12 @@ Agent Skills solve this by giving AI assistants **expert-level WordPress knowled
 | **wp-performance** | Profiling, caching, database optimization, Server-Timing |
 | **wp-phpstan** | PHPStan static analysis for WordPress projects (config, baselines, WP-specific typing) |
 | **wp-playground** | WordPress Playground for instant local environments |
+| **wp-lab-pass** | Verify a change against a real local WordPress site: instrument the side effect, toggle environment states, check evidence |
 | **wpds** | WordPress Design System |
 | **wp-plugin-directory-guidelines** | WordPress Plugin Directory Guidelines |
 | **blueprint** | WordPress Playground Blueprints for declarative Playground environment setup |
+| **code-mentor** | Explain the intended design before coding, then check the result stayed simple and on plan |
+| **cs-philosophy-review** | First-principles design critique: simplicity, deletion, abstraction restraint, explicit tradeoffs |
 
 ## How It Works
 

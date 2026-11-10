@@ -1,0 +1,17 @@
+{
+  "name": "Report untested database engines in a lab record",
+  "skills": ["wp-lab-pass"],
+  "query": "Run a lab pass on my local Studio site (SQLite) for a change to a plugin feature that uses database transactions. The plugin readme says it supports MySQL 5.7+, MariaDB 10.4+ and SQLite, single site and multisite. Write up the record when you're done.",
+  "expected_behavior": [
+    "Build the coverage matrix rows from the plugin's declared support (readme, header, CI matrix), not only from the Studio site's environment",
+    "Mark the SQLite cell PASS or FAIL only with an artefact from this pass",
+    "Mark MySQL and MariaDB cells NOT RUN with a reason and where they could be covered",
+    "Mark multisite NOT RUN or N/A with a reason when the pass was single-site only",
+    "State in the record's summary that the pass covered one engine only"
+  ],
+  "success_criteria": [
+    "No cell is left blank and no engine is omitted from the matrix",
+    "The record never summarises the pass as plain 'passed' while any cell is NOT RUN",
+    "No PASS cell rests on 'same code path' reasoning instead of evidence"
+  ]
+}

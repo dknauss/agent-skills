@@ -1,0 +1,276 @@
+---
+name: wp-lab-pass
+description: "Use when a change needs checking against a real WordPress site rather than stubs: run a lab pass on a disposable local site with the branch symlinked in, instrument the side effect (mail, HTTP, options, cron), toggle the environment between its production-like and suppressed states, drive it as each role, and verify the evidence rather than the screen. For feature work whose correctness depends on real capability resolution, real wp_mail(), or real admin markup."
+compatibility: "Targets WordPress 6.9+ (PHP 7.2.24+). Assumes a local site runner (WordPress Studio, wp-env, or Playground CLI) and WP-CLI. Browser steps need a browser-capable session; everything else runs from a shell."
+---
+
+# WordPress lab pass
+
+A lab is a disposable, real WordPress site standing in for the site a change will
+eventually run on. Its job is to **disagree with you**. Unit tests with stubbed
+WordPress functions can only prove what they were told to believe; a lab has real
+`WP_Roles`, real `wp_mail()`, real admin markup, and real user sessions.
+
+## When to use
+
+- A change depends on behaviour a stub cannot model: capability resolution, role
+  storage, `wp_mail()`, cron, the REST stack, admin markup, multisite scoping.
+- A design doc asks for a "live check" before merge.
+- A test passes but the claim feels unearned — especially if the test seeds state
+  the plugin itself would never persist.
+- Before a release, for anything with a real runtime surface.
+
+Skip it for pure logic, formatting, parsing, or docs. Those belong in unit tests,
+where they are faster and more precise.
+
+## Inputs required
+
+Gather before starting:
+
+1. **Which behaviours need proving.** Write them down as observable outcomes — "a
+   suppressed environment sends nothing and says so", not "the mail code works".
+2. **The branch or worktree** holding the change.
+3. **A lab site** to use, and whether it is single-site or multisite.
+4. **The side effect to instrument** — outgoing mail, HTTP requests, option
+   writes, scheduled events. There is almost always one; find it before building
+   the lab, because it determines the harness.
+5. **Which roles** must be checked, and whether the plugin assigns them in a
+   non-obvious way.
+
+**Who writes the probes.** By default, the agent making the change also picks
+what to check. That's a conflict of interest. For authorization, auth, secrets,
+personal data, outbound mail or requests, destructive operations, or a release
+candidate, use a [separate tester](references/separate-tester.md): a different
+agent, ideally on a different model, commits the probe list before any code
+exists, and the implementer has to pass probes it never wrote. If a project's
+CI guards the probe file, a probe that changes after the build fails the pull
+request.
+
+## Procedure
+
+### 1. Point a real site at the branch
+
+Identify the local URL, directory, activation scope, current symlink target and
+whether the site was already running. Confirm it is disposable before mutating it.
+Use the runner's supported tools; when Studio tools are available, use those for
+site management and WP-CLI. Do not infer remote-write authority from a lab task.
+
+Prefer a symlink to the checkout. Inspect an existing destination before replacing
+it; preserve real directories and existing work. Record the resolved source file
+path and commit. If the runner cannot mount symlinks, use a built package and
+record its checksum and source revision.
+
+**Restart after changing a mounted symlink.** Studio (and some other runners) mount symlinks at
+start; repoint one while the site is running and the plugin silently does not
+load. Then confirm the branch is actually live, rather than assuming:
+
+```bash
+wp eval 'echo class_exists("Your\\New\\Class") ? "branch loaded" : "NOT loaded";'
+```
+
+**Run a baseline smoke gate before any behaviour check**, so a broken lab is not
+mistaken for a broken change: no PHP fatals in `debug.log`, no console errors on
+the screens you will drive, and `wp plugin list --format=json` matches the
+expected activation matrix. If the lab mounts third-party plugins from release
+zips, pin each one by version and SHA-256 so two passes compare the same code.
+
+**Need something a local runner can't give you** — Jetpack/WooCommerce trunk or
+beta builds, Gutenberg Nightly, a specific PHP 8.2–8.5, or a throwaway public
+URL? Jurassic Ninja (https://jurassic.ninja/) spins up a hosted site destroyed
+after 24 hours. It needs a WordPress.com login and has no CLI or API, so it
+cannot take a symlink: upload a zip of the branch and record its commit hash in
+the lab record.
+
+### 2. Instrument the side effect
+
+Add a mu-plugin that records what the code hands to the outside world. For mail,
+this replaces an SMTP catcher and needs no install:
+
+```php
+<?php
+/**
+ * Plugin Name: Lab mail capture
+ * Description: Counts intercepted lab mail without retaining its payload.
+ */
+
+define( 'LAB_CAPTURE_FLAG', WP_CONTENT_DIR . '/lab-capture-on' );
+define( 'LAB_CAPTURE_LOG', WP_CONTENT_DIR . '/lab-mail-capture.jsonl' );
+
+if ( file_exists( LAB_CAPTURE_FLAG ) ) {
+	// Production-like: the plugin hands mail to WordPress, and we are the MTA.
+	add_filter(
+		'pre_wp_mail',
+		static function ( $pre, $atts ) {
+			lab_capture_record( 'intercepted' );
+
+			return true;
+		},
+		5,
+		2
+	);
+}
+
+/**
+ * Append one record.
+ *
+ * @param string $outcome What happened.
+ */
+function lab_capture_record( $outcome ) {
+	file_put_contents(
+		LAB_CAPTURE_LOG,
+		wp_json_encode(
+			[
+				'time'        => gmdate( 'c' ),
+				'outcome'     => $outcome,
+			]
+		) . "\n",
+		FILE_APPEND
+	);
+}
+```
+
+Restrict fixtures to an explicitly enabled disposable local site. Keep captures
+outside publicly served paths where possible, with restrictive permissions. Never
+retain passwords, cookies, nonces, authorization headers or real message bodies.
+If recipients or payload shape matter, assert synthetic expected values in memory
+and record only pass/fail metadata.
+
+`pre_wp_mail` interception proves the transport boundary was reached, not that
+mail was delivered. `wp_mail` argument filtering precedes `pre_wp_mail`; order
+between callbacks on the same filter depends on priority. Demonstrate that the
+capture runs on a permitted control before treating its absence as suppression.
+
+### 3. Make the environment states switchable
+
+Most plugins behave differently on production and non-production sites. Drive that
+from a **flag file**, not a code edit, so switching costs nothing and cannot be
+forgotten in a commit:
+
+```bash
+touch wp-content/lab-capture-on   # production-like
+rm wp-content/lab-capture-on      # suppressed / non-production
+```
+
+Confirm the switch took effect through the plugin's own accessor rather than
+inferring it:
+
+```bash
+wp eval 'echo Your\\Plugin::suppresses_mail() ? "SUPPRESSING" : "not suppressing";'
+```
+
+### 4. Create real users for every role
+
+Create uniquely named disposable users with generated passwords held only in
+memory. Avoid fixed passwords and credentials in command arguments, logs or
+committed fixtures. Reuse existing sessions only when the runner supports it;
+record whether the lab exercised login itself or started with a minted session.
+
+**Check what actually persisted.** A plugin may store a role differently from how
+you assigned it — a custom role can be stored as a base role plus a marker, so a
+site that drops the plugin cannot strand anyone on a role that no longer exists:
+
+```bash
+wp eval 'echo json_encode( get_userdata( 2 )->roles ), json_encode( get_user_meta( 2 ) );'
+```
+
+If the assignment did not stick, find the plugin's own assignment path and use it.
+Do not force the stored value into a shape the plugin never writes — that is how a
+lab starts agreeing with a broken test.
+
+### 5. Drive it as a person would
+
+Log in as each role and use the feature through the interface. For repetitive
+submissions, post the real form from the page's own context so nonces and cookies
+stay real:
+
+```js
+const form = document.querySelector('.my-form');
+const url = form.getAttribute('action');   // NOT form.action — see failure modes
+const fd = new FormData(form);
+fd.set('subject', 'probe');
+const res = await fetch(url, { method: 'POST', body: fd, credentials: 'same-origin' });
+```
+
+### 6. Verify the evidence, not the screen
+
+This is the step that earns the lab. For each behaviour, check the artefact:
+
+- Did a message reach the capture file, with the right recipient and headers?
+- Did **nothing** reach it where nothing should have?
+- Does the stored log hold what it promised — and *not* hold what it promised not
+  to, such as message bodies?
+- Did the option, transient or scheduled event change as expected?
+
+"The page said success" is the claim under test, never the proof.
+
+### 7. Record and tear down
+
+Write results in the project, keeping reusable instructions in this skill. Use
+the [evidence template](references/evidence-template.md). Record unperformed
+checks explicitly, and fill in its **coverage matrix**: list every database
+engine, WordPress/PHP version, topology and object-cache state the code claims to
+support, and mark each PASS, FAIL, NOT RUN or N/A. Build the rows from the declared
+support surface, not from memory of what might matter, so an environment you never
+thought of still shows up as a hole rather than silence. Use a new output artifact for each run so previous evidence
+survives. Assert the expected status for each request path; investigate unexpected
+500 responses rather than broadening accepted codes to include them.
+
+Restore the exact options and scope saved before setup, revoke created sessions,
+and delete only users, wrappers and captures created by this pass. Verify cleanup
+with read-only checks. Restore prior symlink targets when changed. Stop sites
+started for this pass; leave previously running sites running. Destroy an entire
+environment only if this pass created it exclusively and its exact target is
+confirmed disposable. Never turn an example cleanup command into a broad deletion.
+
+## Verification
+
+A lab pass is complete when every behaviour on the list from "Inputs required"
+has an artefact behind it, every coverage-matrix cell is marked, and the record
+names anything that could not be checked. With a separate tester, every tester probe also
+has a result, and none is FAIL, DISPUTED or NOT RUN. A green result on one engine or runner
+is a result for that cell only. If you cannot show the evidence, the item is unverified — say so rather
+than rounding it up.
+
+## Failure modes / debugging
+
+- **The plugin silently does not load.** The symlink was repointed while the site
+  was running. Restart, then assert a class from the branch exists.
+- **"Green" was the main checkout, not the branch.** Worktrees, Composer path
+  repos and autoloaders can resolve to the main checkout, so a pass proves
+  nothing about the branch. Assert something only the branch contains (step 1)
+  and fail hard if it is absent.
+- **The author only probed what it built.** Every check lines up with a code
+  path in the diff, and nothing tests the denied role or the suppressed state.
+  Bring in a [separate tester](references/separate-tester.md).
+- **The implementer "clarified" a tester probe.** That's editing it. Mark the
+  probe DISPUTED with a reason and leave it for a human.
+- **A subagent says the lab passed.** Treat its report as a claim until you have
+  seen the artefact (capture file, `wp` output, CI run) yourself.
+- **The container cannot see your files.** Docker-backed runners often mount only
+  `$HOME`; a package staged in the system temp directory is invisible. Stage it
+  under `$HOME`.
+- **Port already allocated.** Another project's environment holds it. Change your
+  ports rather than stopping their containers.
+- **`form.action` returns an element, not a URL.** A form containing an input
+  named `action` shadows the property. Use `form.getAttribute('action')`.
+- **Admin notices move.** Core's JavaScript relocates `.notice` elements to the
+  top of the page, so a notice rendered inside a widget will not stay there.
+  Assert on the notice's own markup, not on where it sits.
+- **A role assignment does not stick.** See step 4; the plugin probably owns the
+  assignment path.
+- **Green on SQLite, broken on MySQL (or the reverse).** Database drivers expose
+  different properties, functions and transaction behaviour. A capability probe
+  that the SQLite integration answers can be unsupported by `mysqli`, and a
+  conservative code path then fails closed on every request while looking like a
+  pass. Treat each engine as its own coverage cell; never let one stand in for
+  another.
+- **The test passed but the lab disagrees.** The test seeded state the plugin
+  never persists. Fix the test's fixture first, watch it go red, then fix the code.
+
+## Escalation
+
+Ask a human when: the lab needs credentials or a third-party service you were not
+given; the behaviour only reproduces with client data you must not copy; disk or
+container limits mean tearing down someone else's environment; or the lab finds a
+defect whose fix changes a settled design decision rather than an implementation
+detail.

@@ -123,6 +123,12 @@ Be aware of these 6.9 changes when profiling:
 
 Reference: https://make.wordpress.org/core/2025/11/18/wordpress-6-9-frontend-performance-field-guide/
 
+## Admin asset prefetch (WordPress 7.2, committed r64120)
+
+Core now prints `<link rel="prefetch">` for the *next* admin screen's render-blocking assets (login → dashboard, dashboard/list → editor) via `wp_prefetch_admin_assets()`, filterable with `wp_prefetch_admin_assets`. It is skipped when script concatenation is on. Plugins that slow admin navigation should add their own next-screen assets through that filter rather than inlining or preloading eagerly.
+
+- `references/admin-asset-prefetch.md`
+
 ## Verification
 
 - Baseline vs after numbers are captured (same environment, same URL/route).

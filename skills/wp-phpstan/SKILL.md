@@ -88,6 +88,10 @@ See:
   - confirm autoloading/stubs, or add a narrow ignore pattern
 - Huge error counts after enabling PHPStan:
   - reduce `paths`, add `excludePaths`, start at a lower level, then ratchet up
+- Slow runs / full re-analysis in CI:
+  - on PHPStan 2.3+, cache the result cache between CI runs (it survives Composer updates); see `references/configuration.md`
+- New `*.unused*` / `function.unusedParameter` errors after enabling bleeding edge:
+  - hook callbacks legitimately ignore params; ignore by identifier + path rather than changing callback signatures
 - Inconsistent types around hooks / REST params:
   - add explicit PHPDoc (see references) rather than runtime guards
 

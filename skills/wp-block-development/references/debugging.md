@@ -24,7 +24,7 @@ If you see "The block 'namespace/block' is registered with API version 2 or lowe
 
 - Update `apiVersion` to `3` in block.json.
 - This warning only appears when `SCRIPT_DEBUG` is true.
-- WordPress 7.0 will require apiVersion 3 for proper iframe editor support.
+- WordPress 7.1 always iframes the post editor (7.0 still falls back when any block is v2), so apiVersion 3 is required for correct editor rendering.
 
 ## Styles not applying in editor (apiVersion 3 / iframe)
 

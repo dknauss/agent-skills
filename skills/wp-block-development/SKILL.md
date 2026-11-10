@@ -55,7 +55,7 @@ After scaffolding:
 WordPress 6.9 enforces `apiVersion: 3` in the block.json schema. Blocks with apiVersion 2 or lower trigger console warnings when `SCRIPT_DEBUG` is enabled.
 
 **Why this matters:**
-- WordPress 7.0 will run the post editor in an iframe regardless of block apiVersion.
+- In WordPress 7.0 the post editor is iframed only when every registered block is apiVersion 3+; WordPress 7.1 enforces the iframe for all blocks regardless of apiVersion.
 - apiVersion 3 ensures your block works correctly inside the iframed editor (style isolation, viewport units, media queries).
 
 **Migration:** Changing from version 2 to 3 is usually as simple as updating the `apiVersion` field in `block.json`. However:
@@ -94,6 +94,8 @@ Prefer PHP registration using metadata, especially when:
 - you need dynamic rendering
 - you need translations (`wp_set_script_translations`)
 - you need conditional asset loading
+
+For simple server-rendered blocks with only text/number/boolean/select settings, WordPress 7.0+ can register a block from PHP alone (`supports.autoRegister`, no `block.json` or build) — see the PHP-only section of the reference.
 
 Read and apply:
 - `references/registration.md`
