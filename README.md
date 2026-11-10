@@ -40,6 +40,8 @@ Agent Skills solve this by giving AI assistants **expert-level WordPress knowled
 | **wpds** | WordPress Design System |
 | **wp-plugin-directory-guidelines** | WordPress Plugin Directory Guidelines |
 | **blueprint** | WordPress Playground Blueprints for declarative Playground environment setup |
+| **code-mentor** | Explain the intended design before coding, then check the result stayed simple and on plan |
+| **cs-philosophy-review** | First-principles design critique: simplicity, deletion, abstraction restraint, explicit tradeoffs |
 
 ## How It Works
 
