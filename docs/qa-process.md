@@ -149,10 +149,12 @@ the owner's exemptions. The setup for one maintainer working with agents:
    job that checks out the base branch and reads only the pull request's commit
    list, never running its code). A branch can propose a weaker check, but it
    isn't graded by it.
-3. **Flag guardrail edits loudly.** That base-run check fails any pull request
-   that touches the workflow files, the checkers, their tests and fixtures, or
-   an existing probe file. Dan merges those after reading the diff. Agents put
-   guardrail changes in their own pull request, never bundled with a feature.
+3. **Flag guardrail edits loudly.** That base-run check labels and summarizes
+   any pull request that touches the workflow files, the checkers, their tests
+   and fixtures, or an existing probe file. It warns rather than blocks, because
+   point 2 already keeps a weakened checker from grading its own pull request.
+   Dan reads those diffs before merging. Agents put guardrail changes in their
+   own pull request, never bundled with a feature.
 4. **Protect the tests, not only the workflow.** Weakening a fixture weakens
    the check just as surely.
 5. **Make the checks required, with no admin bypass.** Otherwise a failing
@@ -174,22 +176,33 @@ its own branch, and it refuses tag pushes, branch deletes and repository
 settings changes. Merges through the GitHub tools are not refused, so the rule
 that only Dan's explicit go merges is still a promise.
 
-The fix is to take the keys away, in this order:
+The fix is to take the keys away. The free route, in order of payoff:
 
-1. **Agents get their own identity.** A GitHub App or a machine account with
-   Write (not Maintain or Admin) on the three repositories, and a fine-grained
-   token without workflow or administration permission. Pull requests then show
-   the agent as author, so Dan's review is a real second party.
-2. **Rulesets with an empty bypass list** on the default branch: required
-   checks, required review, no force pushes, no deletions. Dan keeps admin to
-   change the ruleset, but the agent identity can't.
-3. **CODEOWNERS review by Dan** on `.github/**`, the checker scripts, their
-   tests and fixtures, and probe files.
-4. **Merges, tags and releases stay human-only acts**, done from Dan's account.
-5. **Local agents never see Dan's admin token.** On the Mac, agent sessions use
-   the agent token (for example a separate `GH_TOKEN` and `gh` config
-   directory) and run without root; Dan's own `gh` login and signing key stay
-   out of their reach.
+1. **Rulesets on the default branch with an empty bypass list.** Require a pull
+   request, require the status checks (including the probe and guardrail
+   checks), block force pushes and deletion. Nobody, Dan included, merges red.
+   Agents in cloud sessions have no tool that edits rulesets, so this holds
+   against them even though they act as Dan. Rulesets are free on public
+   repositories; on a private repository owned by a free personal account they
+   aren't enforced. Keel and BBD are public, so they're covered free. AX is
+   private, so it needs GitHub Pro; without it, AX relies on points 2 to 4.
+2. **A free machine account for local agents.** GitHub allows one machine
+   account per person at no cost. Add it as a collaborator (Write on a personal
+   repository, never Admin) and give local agent sessions its fine-grained
+   token, with no Administration or Workflows permission. With that token an
+   agent can't change rulesets or edit workflow files.
+3. **Keep Dan's own login out of agent sessions.** Local agents use the machine
+   account's token through their own `gh` config, don't run as root, and never
+   see Dan's signing key unlocked.
+4. **Merges, tags and releases stay Dan's acts.** Cloud sessions can still merge
+   as Dan through the GitHub tools; the rulesets make sure what they merge is
+   green, and the rule that they merge only on Dan's explicit go covers the
+   rest.
+
+Required CODEOWNERS review is left out on purpose for now. GitHub won't let an
+author approve their own pull request, and cloud agents open pull requests as
+Dan, so requiring his review would block every one of them. It becomes useful
+if cloud sessions ever run under the machine account too.
 
 ## Where this came from
 
