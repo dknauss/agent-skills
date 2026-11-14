@@ -47,6 +47,9 @@ case "$path" in
 	repos/o/r/rulesets)
 		case "$FAKE_RULESETS" in 500) err 500 "Server Error" ;; *) ok "$FAKE_RULESETS" ;; esac ;;
 	repos/o/r/rulesets/*) ok "$FAKE_RULESET" ;;
+	repos/o/r/commits/main/check-runs*) ok "$FAKE_RUNS" ;;
+	repos/o/r/pulls*) ok '[{"head":{"sha":"abc123"}}]' ;;
+	repos/o/r/commits/abc123/check-runs*) ok "$FAKE_PR_RUNS" ;;
 	repos/o/r/contents/.github/workflows/lab-probes.yml*)
 		case "$FAKE_PROBES" in 404) err 404 "Not Found" ;; *) ok '{}' ;; esac ;;
 	repos/o/r/contents/.github/workflows*) ok '[]' ;;
@@ -75,6 +78,11 @@ four='["Lint and unit tests","Counterpart recorded","Tester probes came first","
 existing='[{"id":11,"name":"QA process: protect default branch"},{"id":12,"name":"QA process: release tags"}]'
 existing_full='{"id":11,"rules":[{"type":"deletion"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Lint and unit tests"},{"context":"Counterpart recorded"},{"context":"Tester probes came first"},{"context":"Guardrail changes reviewed"}]}}]}'
 export FAKE_PROBES=200 FAKE_RULESET="$existing_full"
+# Check runs GitHub has seen: on main, and on a recent pull request's head
+# (where the pull_request_target guard jobs report).
+export FAKE_RUNS='{"check_runs":[{"name":"Lint and unit tests"},{"name":"Counterpart recorded"},{"name":"lint"},{"name":"wordpress (7.4, 6.4)"},{"name":"wordpress (8.4, 6.4)"}]}'
+export FAKE_PR_RUNS='{"check_runs":[{"name":"Tester probes came first"},{"name":"Guardrail changes reviewed"}]}'
+
 
 # 1. The Keel incident: re-run after classic protection was removed.
 FAKE_PROTECTION=404 FAKE_RULESETS="$existing" run "re-run with protection 404" 0 --apply
@@ -117,6 +125,25 @@ expect_out "--check-app any" "a token with repo scope could fake one"
 # 8. A bad --check-app is refused before anything is written.
 FAKE_PROTECTION=404 FAKE_RULESETS="$existing" run "bad --check-app refused" nonzero --apply --check-app actions
 expect_no_write "bad --check-app refused"
+
+# 9. A name with a comma, passed with --check, stays one name.
+FAKE_PROTECTION=404 FAKE_RULESETS="$existing" run "--check keeps commas" 0 --apply --check lint --check "wordpress (7.4, 6.4)" --check "wordpress (8.4, 6.4)"
+got="$(put_checks)"
+[ "$got" = '["lint","wordpress (7.4, 6.4)","wordpress (8.4, 6.4)"]' ] || { echo "FAIL --check keeps commas: PUT checks $got"; fail=$((fail + 1)); }
+
+# 10. The same names through --checks are refused, not split.
+FAKE_PROTECTION=404 FAKE_RULESETS="$existing" run "--checks comma in parentheses refused" nonzero --apply --checks "lint,wordpress (7.4, 6.4)"
+expect_out "--checks comma in parentheses refused" "Pass each such name with --check"
+expect_no_write "--checks comma in parentheses refused"
+
+# 11. A check that has never run is refused as a likely typo.
+FAKE_PROTECTION=404 FAKE_RULESETS="$existing" run "unseen check refused" nonzero --apply --check lint --check "wordpress (7.4"
+expect_out "unseen check refused" "never run"
+expect_no_write "unseen check refused"
+
+# 12. --allow-unseen-check lets a new job through, with a warning.
+FAKE_PROTECTION=404 FAKE_RULESETS="$existing" run "--allow-unseen-check" 0 --apply --check "Brand new job" --allow-unseen-check
+expect_out "--allow-unseen-check" "haven't run yet"
 
 if [ "$fail" -gt 0 ]; then
 	echo "$fail qa-bootstrap assertion(s) failed."
