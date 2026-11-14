@@ -18,6 +18,9 @@ jobs:
       - name: Run local eval harness
         run: node eval/harness/run.mjs
 
+      - name: qa-bootstrap.sh never turns an API error into a setting
+        run: bash shared/scripts/tests/qa-bootstrap.test.sh
+
       - name: Build skillpacks (Codex + VS Code)
         run: node shared/scripts/skillpack-build.mjs --clean --out=dist --targets=codex,vscode
 
