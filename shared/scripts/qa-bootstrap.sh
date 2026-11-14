@@ -30,7 +30,8 @@
 #                   [--files /path/to/local/clone] [--apply]
 #
 #   --bot     machine account to add as a Write collaborator
-#   --checks  required status check names; default: the checks the current
+#   --checks  required status check names; default: the checks this script's
+#             ruleset already requires (on a re-run) and the checks classic
 #             branch protection requires, plus "Tester probes came first" and
 #             "Guardrail changes reviewed" when the repo has
 #             .github/workflows/lab-probes.yml
@@ -60,6 +61,30 @@ apply=0
 die() { echo "qa-bootstrap: $*" >&2; exit 1; }
 say() { echo "$*"; }
 plan() { if [ "$apply" -eq 1 ]; then echo "APPLY: $*"; else echo "WOULD: $*"; fi; }
+
+# gh_get PATH [gh args...]: print the response body of a GET.
+# Returns 4 on HTTP 404 and prints nothing. Any other failure prints gh's error
+# and returns 1. gh writes an error's JSON body to stdout, so the body is only
+# ever printed on success: an error message must never become data (that is
+# how a "Branch not protected" 404 once became three required check names).
+gh_get() {
+	local out err rc=0
+	err="$(mktemp)"
+	out="$(gh api "$@" 2>"$err")" || rc=$?
+	if [ "$rc" -eq 0 ]; then
+		rm -f "$err"
+		printf '%s\n' "$out"
+		return 0
+	fi
+	if grep -q 'HTTP 404' "$err"; then
+		rm -f "$err"
+		return 4
+	fi
+	cat "$err" >&2
+	rm -f "$err"
+	echo "qa-bootstrap: GitHub API call failed: gh api $*" >&2
+	return 1
+}
 
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -96,13 +121,48 @@ fi
 say
 
 # --- 1. Ruleset ------------------------------------------------------------
+# Every read below aborts the run on an error other than 404, so a failed call
+# can never be mistaken for "nothing there" or turned into a check name.
+rc=0
+rulesets="$(gh_get "repos/$repo/rulesets")" || rc=$?
+if [ "$rc" -eq 4 ]; then
+	rulesets='[]'
+elif [ "$rc" -ne 0 ]; then
+	if [ "$private" = "true" ] && [ "$owner_type" = "User" ]; then
+		say "   Can't read rulesets (a private personal repository needs GitHub Pro for them)."
+		rulesets='[]'
+	else
+		die "can't read the rulesets of $repo; nothing was changed."
+	fi
+fi
+existing_id="$(jq -r --arg n "$RULESET_NAME" '[.[] | select(.name == $n) | .id][0] // empty' <<<"$rulesets")"
+
 if [ -z "$checks" ]; then
-	checks="$(gh api "repos/$repo/branches/$default_branch/protection" \
-		--jq '[.required_status_checks.checks[]?.context] | join(",")' 2>/dev/null || true)"
-	if gh api "repos/$repo/contents/.github/workflows/lab-probes.yml?ref=$default_branch" >/dev/null 2>&1; then
+	# Start from what is already required, in the ruleset (on a re-run) and in
+	# classic branch protection (on a first run), so a re-run never drops one.
+	if [ -n "$existing_id" ]; then
+		existing="$(gh_get "repos/$repo/rulesets/$existing_id")" || die "can't read ruleset $existing_id; nothing was changed."
+		checks="$(jq -r '[.rules[]? | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context] | join(",")' <<<"$existing")"
+	fi
+	rc=0
+	protection="$(gh_get "repos/$repo/branches/$default_branch/protection")" || rc=$?
+	if [ "$rc" -eq 4 ]; then
+		protection='{}'
+	elif [ "$rc" -ne 0 ]; then
+		die "can't read branch protection on $default_branch; nothing was changed."
+	fi
+	while IFS= read -r c; do
+		[ -n "$c" ] || continue
+		case ",$checks," in *",$c,"*) ;; *) checks="${checks:+$checks,}$c" ;; esac
+	done < <(jq -r '.required_status_checks.checks[]?.context // empty, .required_status_checks.contexts[]? // empty' <<<"$protection" | awk '!seen[$0]++')
+	rc=0
+	gh_get "repos/$repo/contents/.github/workflows/lab-probes.yml?ref=$default_branch" >/dev/null || rc=$?
+	if [ "$rc" -eq 0 ]; then
 		for c in "Tester probes came first" "Guardrail changes reviewed"; do
 			case ",$checks," in *",$c,"*) ;; *) checks="${checks:+$checks,}$c" ;; esac
 		done
+	elif [ "$rc" -ne 4 ]; then
+		die "can't check for lab-probes.yml; nothing was changed."
 	fi
 fi
 
@@ -110,6 +170,12 @@ if [ "$is_fork" = "true" ]; then
 	checks=""
 fi
 checks_json="$(jq -cn --arg c "$checks" '$c | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map({context: .})')"
+# A check name is a job name. Anything that looks like JSON or a URL is an API
+# error leaking through, so refuse it rather than require a check that never runs.
+bad="$(jq -r '.[].context | select(test("[{}\"\\\\]|https?://|^\\s*$"))' <<<"$checks_json")"
+if [ -n "$bad" ]; then
+	die "refusing these required check names, which look like an error message, not a job: $bad"
+fi
 
 ruleset="$(jq -n --arg name "$RULESET_NAME" --argjson checks "$checks_json" --argjson fork "$is_fork" '{
 	name: $name,
@@ -148,7 +214,6 @@ if [ "$private" = "true" ] && [ "$owner_type" = "User" ]; then
 	say "   Without it GitHub refuses or doesn't enforce them; steps 2 to 4 still help."
 fi
 
-existing_id="$(gh api "repos/$repo/rulesets" --jq ".[] | select(.name == \"$RULESET_NAME\") | .id" 2>/dev/null | head -n1 || true)"
 if [ -n "$existing_id" ]; then
 	plan "update ruleset $existing_id"
 	if [ "$apply" -eq 1 ]; then
@@ -184,7 +249,7 @@ if [ "$is_fork" = "true" ]; then
 	say "   Fork: skipped (no releases are cut here)."
 else
 	say "   Tag ruleset \"$TAG_RULESET_NAME\": only repository admins can create, move or delete v* tags."
-	tag_id="$(gh api "repos/$repo/rulesets" --jq ".[] | select(.name == \"$TAG_RULESET_NAME\") | .id" 2>/dev/null | head -n1 || true)"
+	tag_id="$(jq -r --arg n "$TAG_RULESET_NAME" '[.[] | select(.name == $n) | .id][0] // empty' <<<"$rulesets")"
 	if [ -n "$tag_id" ]; then
 		plan "update tag ruleset $tag_id"
 		[ "$apply" -eq 1 ] && gh api -X PUT "repos/$repo/rulesets/$tag_id" --input - <<<"$tag_ruleset" >/dev/null && say "   Updated."
