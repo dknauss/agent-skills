@@ -225,10 +225,21 @@ fi
 # against the check runs GitHub has seen on the default branch and on the heads
 # of the ten most recent pull requests (pull_request_target jobs only show
 # there), and refuse names that appear nowhere unless --allow-unseen-check.
+# reported REF: every check-run name and commit-status context on REF, all
+# pages. (A CI service outside GitHub Actions may report statuses only.)
+reported() {
+	local rc=0
+	gh_get "repos/$repo/commits/$1/check-runs?per_page=100" --paginate --jq '.check_runs[].name' || rc=$?
+	[ "$rc" -eq 0 ] || [ "$rc" -eq 4 ] || return "$rc"
+	rc=0
+	gh_get "repos/$repo/commits/$1/statuses?per_page=100" --paginate --jq '.[].context' || rc=$?
+	[ "$rc" -eq 0 ] || [ "$rc" -eq 4 ] || return "$rc"
+	return 0
+}
 if [ "$checks_json" != "[]" ]; then
 	seen=""
 	rc=0
-	runs="$(gh_get "repos/$repo/commits/$default_branch/check-runs?per_page=100" --jq '.check_runs[].name')" || rc=$?
+	runs="$(reported "$default_branch")" || rc=$?
 	[ "$rc" -eq 0 ] || [ "$rc" -eq 4 ] || die "can't read check runs on $default_branch; nothing was changed."
 	seen="$runs"
 	rc=0
@@ -236,7 +247,7 @@ if [ "$checks_json" != "[]" ]; then
 	[ "$rc" -eq 0 ] || [ "$rc" -eq 4 ] || die "can't list pull requests; nothing was changed."
 	for sha in $heads; do
 		rc=0
-		runs="$(gh_get "repos/$repo/commits/$sha/check-runs?per_page=100" --jq '.check_runs[].name')" || rc=$?
+		runs="$(reported "$sha")" || rc=$?
 		[ "$rc" -eq 0 ] || [ "$rc" -eq 4 ] || die "can't read check runs for $sha; nothing was changed."
 		seen="$seen"$'\n'"$runs"
 	done

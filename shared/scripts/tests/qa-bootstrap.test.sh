@@ -48,6 +48,7 @@ case "$path" in
 		case "$FAKE_RULESETS" in 500) err 500 "Server Error" ;; *) ok "$FAKE_RULESETS" ;; esac ;;
 	repos/o/r/rulesets/*) ok "$FAKE_RULESET" ;;
 	repos/o/r/commits/main/check-runs*) ok "$FAKE_RUNS" ;;
+	repos/o/r/commits/*/statuses*) ok "${FAKE_STATUSES:-[]}" ;;
 	repos/o/r/pulls*) ok '[{"head":{"sha":"abc123"}}]' ;;
 	repos/o/r/commits/abc123/check-runs*) ok "$FAKE_PR_RUNS" ;;
 	repos/o/r/contents/.github/workflows/lab-probes.yml*)
@@ -144,6 +145,11 @@ expect_no_write "unseen check refused"
 # 12. --allow-unseen-check lets a new job through, with a warning.
 FAKE_PROTECTION=404 FAKE_RULESETS="$existing" run "--allow-unseen-check" 0 --apply --check "Brand new job" --allow-unseen-check
 expect_out "--allow-unseen-check" "haven't run yet"
+
+# 13. A context reported only as a commit status (external CI) counts as seen.
+FAKE_PROTECTION=404 FAKE_RULESETS="$existing" FAKE_STATUSES='[{"context":"ci/external"}]' run "commit status counts as seen" 0 --apply --check "ci/external" --check-app any
+got="$(put_checks)"
+[ "$got" = '["ci/external"]' ] || { echo "FAIL commit status counts as seen: PUT checks $got"; fail=$((fail + 1)); }
 
 if [ "$fail" -gt 0 ]; then
 	echo "$fail qa-bootstrap assertion(s) failed."
