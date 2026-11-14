@@ -141,68 +141,135 @@ A check defined in the repository the agent edits can be weakened in the same
 pull request it grades, and agents that act as the repository owner inherit
 the owner's exemptions. The setup for one maintainer working with agents:
 
-1. **Only a human merge moves code.** Agents push to their own branches and
-   open draft pull requests. They never merge, tag, or push to the default
-   branch on their own.
-2. **Judge the pull request by the default branch's rule.** Guardrail checks
-   run from the default branch's copy of the checker (a `pull_request_target`
-   job that checks out the base branch and reads only the pull request's commit
-   list, never running its code). A branch can propose a weaker check, but it
-   isn't graded by it.
-3. **Flag guardrail edits loudly.** That base-run check labels and summarizes
-   any pull request that touches the workflow files, the checkers, their tests
-   and fixtures, or an existing probe file. It warns rather than blocks, because
-   point 2 already keeps a weakened checker from grading its own pull request.
-   Dan reads those diffs before merging. Agents put guardrail changes in their
-   own pull request, never bundled with a feature.
-4. **Protect the tests, not only the workflow.** Weakening a fixture weakens
-   the check just as surely.
-5. **Make the checks required, with no admin bypass.** Otherwise a failing
-   check is a warning, and the owner's exemption is the agent's exemption.
+1. **Merges, tags and releases are Dan's acts.** Agents push to their own
+   branches and open draft pull requests. For local agents this is enforced
+   (points 6 to 8 below). For cloud sessions, which act as Dan through the
+   GitHub tools, it is enforced only by instruction: they merge when Dan says
+   so in the thread, and the rulesets make sure what they merge is green.
+2. **The default branch grades the pull request.** The guard workflow runs on
+   `pull_request_target`, so the workflow file and the checker both come from
+   the base branch. It checks out the base commit, fetches the pull request's
+   commits as data, and reads them with git; nothing from the pull request's
+   branch runs. A branch can propose a weaker check, but it isn't graded by it.
+   (On plain `pull_request`, the branch's own workflow decides whether the
+   checker runs at all.)
+3. **Changes to the checks need a person's label.** A separate required job,
+   "Guardrail changes reviewed", fails any pull request that adds, changes,
+   removes or renames the workflow files, the checker, its own test and
+   fixtures, or any probe file, until Dan reads those diffs and adds the
+   `guardrail-reviewed` label. Agents put guardrail changes in their own pull
+   request, never bundled with a feature. Ordinary tests are reviewed at merge
+   like any other code; gating them by label would put one on nearly every pull
+   request.
+4. **Tier 3 can be made mechanical.** With the `tier-3` label, the probe job
+   fails when the pull request adds no probe file. The tier itself is a review
+   judgment, and whether every probe result was resolved is read in the
+   evidence record, not checked by the gate.
+5. **The checks are required, with no bypass.** Otherwise a failing check is a
+   warning, and the owner's exemption is the agent's exemption.
 
 ### The access problem underneath
 
 Every rule above binds only an actor who can't change the rules. Today agents
 often act as Dan: the GitHub tools open and merge pull requests under his
-account, and a local agent can run `gh` signed in as him, with admin rights on
-the repository. An admin token can edit branch protection, rulesets and
-required checks, so "no admin bypass" stops a merge but not an agent that
-switches the protection off first. Root on the machine reaches the same token
-and any unlocked signing key. Until agents stop holding the owner's
-credentials, the guardrails here are defaults, not boundaries.
+account, and a local agent can run `gh` or `git` with his credentials and admin
+rights. An admin can edit rulesets, so "no bypass" stops a merge but not an
+agent that switches the protection off first. Until agents stop holding the
+owner's credentials, the guardrails here are defaults, not boundaries.
 
 What already holds in cloud sessions: the git proxy only lets an agent push to
 its own branch, and it refuses tag pushes, branch deletes and repository
-settings changes. Merges through the GitHub tools are not refused, so the rule
-that only Dan's explicit go merges is still a promise.
+settings changes. The GitHub tools available there have no way to edit
+rulesets. They can merge.
 
-The fix is to take the keys away. The free route, in order of payoff:
+The free route, in order of payoff:
 
-1. **Rulesets on the default branch with an empty bypass list.** Require a pull
-   request, require the status checks (including the probe and guardrail
-   checks), block force pushes and deletion. Nobody, Dan included, merges red.
-   Agents in cloud sessions have no tool that edits rulesets, so this holds
-   against them even though they act as Dan. Rulesets are free on public
-   repositories; on a private repository owned by a free personal account they
-   aren't enforced. Keel and BBD are public, so they're covered free. AX is
-   private, so it needs GitHub Pro; without it, AX relies on points 2 to 4.
-2. **A free machine account for local agents.** GitHub allows one machine
-   account per person at no cost. Add it as a collaborator (Write on a personal
-   repository, never Admin) and give local agent sessions its fine-grained
-   token, with no Administration or Workflows permission. With that token an
-   agent can't change rulesets or edit workflow files.
-3. **Keep Dan's own login out of agent sessions.** Local agents use the machine
-   account's token through their own `gh` config, don't run as root, and never
-   see Dan's signing key unlocked.
-4. **Merges, tags and releases stay Dan's acts.** Cloud sessions can still merge
-   as Dan through the GitHub tools; the rulesets make sure what they merge is
-   green, and the rule that they merge only on Dan's explicit go covers the
-   rest.
+6. **Rulesets with an empty bypass list on the default branch.** Require a pull
+   request and the status checks (including both guard jobs), block force
+   pushes and deletion. Free on public repositories. On a private repository
+   owned by a free personal account they aren't enforced; AX is private, so it
+   needs GitHub Pro, and without it relies on points 7 and 8.
+7. **A tag ruleset and a deploy approval.** A Write collaborator can push a
+   `v*` tag, and a tag push can start a deploy to WordPress.org. A tag ruleset
+   on `refs/tags/v*` that blocks creation, update and deletion, with only the
+   Repository admin role allowed to bypass, keeps tags Dan's. Deploy jobs run
+   in a GitHub Environment (Keel's is `wordpress-org`) with Dan as required
+   reviewer. GitHub creates a missing environment with no protection, so check
+   the reviewer is really set.
+8. **A free machine account for local agents.** GitHub allows one machine
+   account per person. Add it as a collaborator with Write, never Admin. Give
+   it a **classic** personal access token with the `repo` scope and **not** the
+   `workflow` scope: GitHub refuses pushes that touch `.github/workflows/` from
+   such a token. (A fine-grained token can't be used here: it only reaches
+   repositories owned by its own account, or by an organization that approves
+   it.) With Write and that token the agent can't edit rulesets, tags or
+   workflows.
 
-Required CODEOWNERS review is left out on purpose for now. GitHub won't let an
-author approve their own pull request, and cloud agents open pull requests as
-Dan, so requiring his review would block every one of them. It becomes useful
-if cloud sessions ever run under the machine account too.
+### Isolating local agents
+
+Pointing `gh` at a different config isn't enough: `GITHUB_TOKEN` overrides it,
+git asks the macOS keychain or `gh auth git-credential` for Dan's password, and
+the SSH agent hands out Dan's key. The strongest fix is a separate macOS user
+account for agents, with its own keychain, home directory and SSH keys, holding
+only the machine account's token. The lighter fix is a launcher that clears
+every channel:
+
+```sh
+# ~/.config/agent/gitconfig: no credential helper except the agent's token
+[credential]
+	helper =
+	helper = "!f() { echo username=x-access-token; echo password=$(cat ~/.config/agent/token); }; f"
+[url "https://github.com/"]
+	insteadOf = git@github.com:
+```
+
+```sh
+agent_env='env -u GITHUB_TOKEN -u GH_TOKEN SSH_AUTH_SOCK= GH_CONFIG_DIR=$HOME/.config/agent/gh GIT_CONFIG_GLOBAL=$HOME/.config/agent/gitconfig GIT_CONFIG_NOSYSTEM=1'
+alias claude-agent="$agent_env claude"
+alias codex-agent="$agent_env codex"
+```
+
+Agents never run with `sudo`, and Dan's signing key stays locked. Self-check
+inside an agent session: `gh api user --jq .login` and
+`git ls-remote https://github.com/dknauss/agency-experience` must both work as
+the machine account and nothing else; `ssh -T git@github.com` must fail.
+
+Required CODEOWNERS review is left out for now. GitHub won't let an author
+approve their own pull request, and cloud agents open pull requests as Dan, so
+requiring his review would block every one of them.
+
+## Setting up a repository
+
+Run [`shared/scripts/qa-bootstrap.sh`](../shared/scripts/qa-bootstrap.sh) once
+per repository, from Dan's own login, never from an agent session. It is a dry
+run until `--apply`, and safe to re-run. It sets the default-branch ruleset
+with no bypass, the `v*` tag ruleset, a required reviewer on any deploy
+environment, the machine account as a Write collaborator, head-branch
+auto-delete, and the `guardrail-reviewed` and `tier-3` labels; with
+`--files <clone>` it copies the lab-probes guard from Keel into a local clone
+for a pull request.
+
+```sh
+qa-bootstrap.sh dknauss/Keel --bot <machine-account>
+qa-bootstrap.sh dknauss/Keel --bot <machine-account> --apply
+```
+
+Then add a "Testing process" pointer to this file in the repository's
+contributing guide or README.
+
+Forks of upstream projects, such as a `wordpress-develop` fork, get a lighter
+setup: only deletion and force pushes are blocked on the default branch, so
+"Sync fork" keeps working, and no guard files, labels or tag rules are added.
+Changes there go upstream, where the upstream project's CI and review apply;
+the lab pass and its record go in the upstream ticket or pull request.
+
+| Repository | Setup |
+| --- | --- |
+| Keel | Full, guard in place |
+| Agency Experience | Full once on GitHub Pro; until then points 7 and 8 only |
+| Better by Default | Full; guard to be ported |
+| WP Texturize Inline Quote Fix | Full; guard to be ported |
+| wordpress-develop (fork) | Fork setup |
 
 ## Where this came from
 
@@ -217,6 +284,6 @@ and [A guardrail your agent can bypass isn't a guardrail](https://badsector.blog
 | Does a lab pass ever face a check its author didn't write? | The separate tester |
 | The checks should come from what the plugin promises, never from the change | Separate tester rule 2 |
 | Wipe the lab or keep a golden seed? Snapshot before each accept | Labs: seed, don't restore; snapshot |
-| A required check in the repository's own workflow file can be weakened in the same pull request | Guarding the guardrails 2 to 4 |
+| A required check in the repository's own workflow file can be weakened in the same pull request | Guarding the guardrails 2 and 3 |
 | A review only holds if the agent can't rewrite the test it's graded on | Principle 3 |
-| Own worktree, no push rights, only a human merge ships | Guarding the guardrails 1 |
+| Own worktree, no push rights, only a human merge ships | Guarding the guardrails 1, 6 to 8 |
