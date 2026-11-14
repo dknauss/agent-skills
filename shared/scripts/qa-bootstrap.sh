@@ -4,13 +4,18 @@
 # Does the parts an agent can't (and shouldn't be able to) do for itself:
 #   1. A ruleset on the default branch with an EMPTY bypass list: pull request
 #      required, required status checks, no force pushes, no deletion.
-#   2. The agent machine account as a Write collaborator (never Admin).
+#   2. Lists anyone else who can push or merge: Dan merges, nobody else, so an
+#      agent account with Write is a way around that and should go.
 #   3. A tag ruleset on v* that only admins can bypass, so an agent with Write
 #      can't push a release tag. If a workflow deploys through a GitHub
-#      Environment (e.g. wordpress-org), checks that it has a required reviewer.
+#      Environment (e.g. wordpress-org), makes sure it has a required reviewer
+#      and only deploys from v* tags, and warns about repository-level secrets:
+#      any workflow on any branch can read those, before any review.
+#   3b. Immutable releases, so an account with Write can't swap a published
+#      release's zip or checksums.
 #   4. Head-branch auto-delete on merge.
-#   5. Optionally, copies the lab-probes guard (workflow, checker, its test and
-#      the probes README) from Keel into a local clone, for a pull request.
+#   5. Optionally, copies the tester-probes check (workflow, checker, its test
+#      and the probes README) from Keel into a local clone, for a pull request.
 #
 # See docs/qa-process.md. Run it from YOUR OWN login (gh signed in as the
 # repository owner or an org admin), never from an agent session: the point is
@@ -26,10 +31,9 @@
 # no pull-request or check requirement, and no guard files.
 #
 # Usage:
-#   qa-bootstrap.sh OWNER/REPO [--bot LOGIN] [--check "Check A" --check "Check B"]
+#   qa-bootstrap.sh OWNER/REPO [--check "Check A" --check "Check B"]
 #                   [--files /path/to/local/clone] [--apply]
 #
-#   --bot     machine account to add as a Write collaborator
 #   --check NAME
 #             a required status check, exactly as GitHub shows it; repeat for
 #             each one. Use this for names with commas, e.g. "wordpress (7.4, 6.4)".
@@ -42,16 +46,18 @@
 #             since a required check that never runs blocks every merge)
 #   Default, with neither --check nor --checks: the checks this script's
 #             ruleset already requires (on a re-run) and the checks classic
-#             branch protection requires, plus "Tester probes came first" and
-#             "Guardrail changes reviewed" when the repo has
-#             .github/workflows/lab-probes.yml
+#             branch protection requires, plus "Tester probes came first" when
+#             the repo has .github/workflows/lab-probes.yml
 #   --check-app ID
 #             GitHub App that must report each required check; default 15368,
 #             GitHub Actions. Pinning the source stops anyone holding a token
-#             with repo scope (the agent account, for one) from posting a fake
+#             with repo scope from posting a fake
 #             green commit status under a required check's name. Pass "any"
 #             only if a required check comes from another app or CI.
 #   --files   local clone to copy the lab-probes guard into (then open a PR)
+#   --no-immutable-releases
+#             leave release immutability off (e.g. a repo that republishes a
+#             rolling release with the same tag)
 #   --apply   make the changes (default is a dry run)
 #
 # Needs: gh (signed in), jq.
@@ -67,14 +73,18 @@ GUARD_FILES=(
 	"tests/lab-probes-check.php"
 	"docs/review/probes/README.md"
 )
+# Jobs that no longer exist. A re-run carries the ruleset's existing checks
+# forward, so these are dropped explicitly: a required check that never runs
+# blocks every merge.
+RETIRED_CHECKS=("Guardrail changes reviewed")
 
 repo=""
-bot=""
 checks=""
 check_app=15368
 allow_unseen=0
 files_dir=""
 apply=0
+immutable=1
 
 die() { echo "qa-bootstrap: $*" >&2; exit 1; }
 say() { echo "$*"; }
@@ -119,7 +129,6 @@ gh_get() {
 
 while [ $# -gt 0 ]; do
 	case "$1" in
-		--bot) bot="${2:?--bot needs a login}"; shift 2 ;;
 		--checks)
 			list="${2:?--checks needs a comma-separated list}"
 			if [[ "$list" =~ \([^\)]*, ]]; then
@@ -133,13 +142,14 @@ while [ $# -gt 0 ]; do
 		--check-app) check_app="${2:?--check-app needs an app ID or any}"; shift 2 ;;
 		--files) files_dir="${2:?--files needs a directory}"; shift 2 ;;
 		--apply) apply=1; shift ;;
+		--no-immutable-releases) immutable=0; shift ;;
 		-h|--help) sed -n '2,/^# Needs/p' "$0"; exit 0 ;;
 		-*) die "unknown option $1" ;;
 		*) [ -z "$repo" ] || die "one repository at a time"; repo="$1"; shift ;;
 	esac
 done
 
-[ -n "$repo" ] || die "usage: qa-bootstrap.sh OWNER/REPO [--bot LOGIN] [--checks ...] [--files DIR] [--apply]"
+[ -n "$repo" ] || die "usage: qa-bootstrap.sh OWNER/REPO [--checks ...] [--files DIR] [--apply]"
 [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "expected OWNER/REPO, got $repo"
 command -v gh >/dev/null || die "gh is not installed"
 command -v jq >/dev/null || die "jq is not installed"
@@ -156,9 +166,6 @@ say "Repository: $repo (default branch $default_branch, private=$private, fork=$
 say "Signed in as: $me"
 [ "$apply" -eq 1 ] || say "Dry run. Nothing will change; pass --apply to make these changes."
 [ "$is_admin" = "true" ] || die "$me is not an admin of $repo. Run this from the owner's login."
-if [ -n "$bot" ] && [ "$me" = "$bot" ]; then
-	die "you are signed in as the agent account. Run this from your own login."
-fi
 say
 
 # --- 1. Ruleset ------------------------------------------------------------
@@ -200,14 +207,18 @@ if [ -z "$checks" ]; then
 	rc=0
 	gh_get "repos/$repo/contents/.github/workflows/lab-probes.yml?ref=$default_branch" >/dev/null || rc=$?
 	if [ "$rc" -eq 0 ]; then
-		for c in "Tester probes came first" "Guardrail changes reviewed"; do
-			add_check "$c"
-		done
+		add_check "Tester probes came first"
 	elif [ "$rc" -ne 4 ]; then
 		die "can't check for lab-probes.yml; nothing was changed."
 	fi
 fi
 
+for c in "${RETIRED_CHECKS[@]}"; do
+	if grep -qxF -- "$c" <<<"$checks"; then
+		say "   Dropping \"$c\": that job no longer exists."
+		checks="$(grep -vxF -- "$c" <<<"$checks" || true)"
+	fi
+done
 if [ "$is_fork" = "true" ]; then
 	checks=""
 fi
@@ -262,6 +273,10 @@ if [ "$checks_json" != "[]" ]; then
 	fi
 fi
 
+# No required approving review: GitHub won't let an author approve their own
+# pull request, and cloud agent sessions open theirs as the owner, so requiring
+# one would block them all. The rule instead: agents open pull requests, Dan
+# merges, and nobody else holds Write.
 ruleset="$(jq -n --arg name "$RULESET_NAME" --argjson checks "$checks_json" --argjson fork "$is_fork" '{
 	name: $name,
 	target: "branch",
@@ -356,47 +371,95 @@ else
 	if [ -z "$envs" ]; then
 		say "   No workflow deploys through an environment."
 	fi
+	me_id="$(gh api user --jq .id)"
 	for env in $envs; do
-		reviewers="$(gh api "repos/$repo/environments/$env" --jq '[.protection_rules[]? | select(.type == "required_reviewers") | .reviewers[]?.reviewer.login] | join(",")' 2>/dev/null || true)"
+		env_info="$(gh api "repos/$repo/environments/$env" 2>/dev/null || echo '{}')"
+		reviewers="$(jq -r '[.protection_rules[]? | select(.type == "required_reviewers") | .reviewers[]?.reviewer.login] | join(",")' <<<"$env_info")"
+		custom="$(jq -r '.deployment_branch_policy.custom_branch_policies // false' <<<"$env_info")"
+		tag_policy=""
+		if [ "$custom" = "true" ]; then
+			tag_policy="$(gh api "repos/$repo/environments/$env/deployment-branch-policies" --jq '[.branch_policies[] | "\(.type // "branch"):\(.name)"] | join(",")' 2>/dev/null || true)"
+		fi
 		if [ -n "$reviewers" ]; then
 			say "   Environment $env requires approval from: $reviewers"
-		else
-			me_id="$(gh api user --jq .id)"
-			plan "make $me approve every deploy through environment $env"
+		fi
+		if [ "$custom" = "true" ] && [ "$tag_policy" = "tag:v*" ]; then
+			say "   Environment $env only deploys from v* tags."
+		fi
+		# One PUT sets both, since a PUT replaces the deployment policy too.
+		if [ -z "$reviewers" ] || [ "$custom" != "true" ]; then
+			plan "make $me approve every deploy through environment $env, and allow only v* tags to deploy"
 			if [ "$apply" -eq 1 ]; then
-				jq -n --argjson id "$me_id" '{reviewers: [{type: "User", id: $id}], prevent_self_review: false}' \
+				jq -n --argjson id "$me_id" '{reviewers: [{type: "User", id: $id}], prevent_self_review: false,
+					deployment_branch_policy: {protected_branches: false, custom_branch_policies: true}}' \
 					| gh api -X PUT "repos/$repo/environments/$env" --input - >/dev/null && say "   Done."
+			fi
+		fi
+		if [ "$tag_policy" != "tag:v*" ]; then
+			[ -z "$tag_policy" ] || say "   Environment $env deploys from: $tag_policy. Expected only tag:v*; remove the others at https://github.com/$repo/settings/environments"
+			plan "add the deployment policy tag v* to environment $env"
+			if [ "$apply" -eq 1 ]; then
+				gh api -X POST "repos/$repo/environments/$env/deployment-branch-policies" -f name='v*' -f type=tag >/dev/null 2>&1 \
+					&& say "   Added." || say "   GitHub refused the tag policy (it may already exist)."
 			fi
 		fi
 	done
 fi
 say
 
-# --- 3. Agent account ------------------------------------------------------
-say "3. Agent machine account"
-if [ -z "$bot" ]; then
-	say "   Skipped (no --bot)."
-elif ! bot_info="$(gh api "users/$bot" 2>/dev/null)"; then
-	say "   No GitHub account is named $bot. Create the machine account first, then run this"
-	say "   again with its exact login. Skipped."
-elif [ "$(jq -r '.type' <<<"$bot_info")" != "User" ]; then
-	say "   $bot is a $(jq -r '.type' <<<"$bot_info"), not a user account. Skipped."
+# --- 2b. Repository secrets and immutable releases ------------------------
+say "2b. Secrets and releases"
+if [ "$is_fork" = "true" ]; then
+	say "   Fork: skipped."
 else
-	say "   $bot: created $(jq -r '.created_at' <<<"$bot_info"), $(jq -r '.html_url' <<<"$bot_info")"
-	say "   Check that this is the account you made. Anyone holding it gets Write here."
-	perm="$(gh api "repos/$repo/collaborators/$bot/permission" --jq .permission 2>/dev/null || echo none)"
-	case "$perm" in
-		admin|maintain)
-			say "   $bot has $perm. That's more than an agent should hold: lower it to Write at"
-			say "   https://github.com/$repo/settings/access" ;;
-		write)
-			say "   $bot already has Write. Nothing to do." ;;
-		*)
-			plan "invite $bot with Write (it must accept the invite while signed in as $bot)"
-			if [ "$apply" -eq 1 ]; then
-				gh api -X PUT "repos/$repo/collaborators/$bot" -f permission=push >/dev/null && say "   Invited."
-			fi ;;
-	esac
+	# A repository-level secret is readable by any workflow on any branch, as
+	# soon as the branch is pushed: no pull request, label or review comes
+	# first. Anyone who can push a workflow file (the owner's token, so every
+	# cloud agent session acting as the owner) can read it. Environment secrets
+	# with a deployment policy are only handed to jobs on the allowed refs.
+	rc=0
+	repo_secrets="$(gh_get "repos/$repo/actions/secrets?per_page=100" --jq '.secrets[].name')" || rc=$?
+	if [ "$rc" -ne 0 ]; then
+		say "   Couldn't list repository secrets; check them by hand: gh secret list -R $repo"
+	elif [ -z "$repo_secrets" ]; then
+		say "   No repository-level secrets."
+	else
+		say "   Repository-level secrets (any workflow on any branch can read these):"
+		printf '     %s\n' $repo_secrets
+		say "   Move each one into the environment of the only job that needs it, with a deployment"
+		say "   policy, then delete the repository copy, e.g.:"
+		say "     gh secret set NAME --env ENV -R $repo && gh secret delete NAME -R $repo"
+	fi
+	rc=0
+	imm="$(gh_get "repos/$repo/immutable-releases" --jq '.enabled')" || rc=$?
+	if [ "$rc" -ne 0 ]; then
+		say "   Couldn't read the release immutability setting."
+	elif [ "$imm" = "true" ]; then
+		say "   Releases are immutable."
+	elif [ "$immutable" -eq 0 ]; then
+		say "   Releases are mutable (--no-immutable-releases): an account with Write can replace a"
+		say "   published release's assets, checksums included."
+	else
+		plan "make new releases immutable, so their assets and tag can't be changed after publishing"
+		if [ "$apply" -eq 1 ]; then
+			gh api -X PUT "repos/$repo/immutable-releases" >/dev/null && say "   On." \
+				|| say "   GitHub refused (see above)."
+		fi
+	fi
+fi
+say
+
+# --- 3. Who else can push or merge ----------------------------------------
+say "3. Collaborators who can push or merge"
+rc=0
+others="$(gh_get "repos/$repo/collaborators?affiliation=direct&per_page=100" --jq ".[] | select(.login != \"$me\") | select(.permissions.push or .permissions.maintain or .permissions.admin) | .login")" || rc=$?
+if [ "$rc" -ne 0 ]; then
+	say "   Couldn't list collaborators; check https://github.com/$repo/settings/access"
+elif [ -z "$others" ]; then
+	say "   Only $me."
+else
+	say "   These accounts can push and merge. Agents don't merge, so remove any agent account:"
+	for o in $others; do say "     $o   gh api -X DELETE repos/$repo/collaborators/$o"; done
 fi
 say
 
@@ -434,19 +497,9 @@ else
 	done
 	say "   Then commit them on a branch, adjust any Keel-specific wording, and open a pull request."
 fi
-if [ "$is_fork" != "true" ]; then
-	for label in guardrail-reviewed tier-3; do
-		if gh api "repos/$repo/labels/$label" >/dev/null 2>&1; then
-			say "   Label $label exists."
-		else
-			plan "create label $label"
-			[ "$apply" -eq 1 ] && gh api -X POST "repos/$repo/labels" -f name="$label" -f color=5319e7 >/dev/null && say "   Created."
-		fi
-	done
-fi
 say
 
 say "Not done by this script (see docs/qa-process.md):"
-say " - Create the machine account and its classic token with the repo scope only (never workflow)."
-say " - Run local agents with only that token: see 'Isolating local agents' in docs/qa-process.md."
+say " - Agents open pull requests; only Dan merges. Nothing here can enforce that for cloud"
+say "   sessions, which act as Dan."
 say " - Add a 'Testing process' pointer to the repo's CONTRIBUTING or README."
