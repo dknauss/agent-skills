@@ -168,7 +168,10 @@ the owner's exemptions. The setup for one maintainer working with agents:
    judgment, and whether every probe result was resolved is read in the
    evidence record, not checked by the gate.
 5. **The checks are required, with no bypass.** Otherwise a failing check is a
-   warning, and the owner's exemption is the agent's exemption.
+   warning, and the owner's exemption is the agent's exemption. Each required
+   check is also pinned to GitHub Actions (app ID 15368). A check matched by
+   name alone can be satisfied by a commit status that anyone with a
+   repo-scoped token posts under that name, the agent account included.
 
 ### The access problem underneath
 
