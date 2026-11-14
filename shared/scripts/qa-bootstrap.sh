@@ -221,7 +221,14 @@ say
 say "3. Agent machine account"
 if [ -z "$bot" ]; then
 	say "   Skipped (no --bot)."
+elif ! bot_info="$(gh api "users/$bot" 2>/dev/null)"; then
+	say "   No GitHub account is named $bot. Create the machine account first, then run this"
+	say "   again with its exact login. Skipped."
+elif [ "$(jq -r '.type' <<<"$bot_info")" != "User" ]; then
+	say "   $bot is a $(jq -r '.type' <<<"$bot_info"), not a user account. Skipped."
 else
+	say "   $bot: created $(jq -r '.created_at' <<<"$bot_info"), $(jq -r '.html_url' <<<"$bot_info")"
+	say "   Check that this is the account you made. Anyone holding it gets Write here."
 	perm="$(gh api "repos/$repo/collaborators/$bot/permission" --jq .permission 2>/dev/null || echo none)"
 	case "$perm" in
 		admin|maintain)
