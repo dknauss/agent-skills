@@ -1,0 +1,212 @@
+name: Independent Codex review
+
+# Reusable: an independent Codex review of one pull request, posted back to the
+# pull request as a comment. It replaces the loop where someone runs Codex by
+# hand and pastes the report into the pull request. See docs/codex-review.md.
+#
+# Independence: Codex sees the repository at the pull request's head, the brief,
+# and the issues the brief names. It gets no builder session, no chat history,
+# and no write access. The brief is the caller's (normally the coordinator's or
+# the maintainer's), never the builder's, per docs/qa-process.md.
+#
+# Safety: the review job has a read-only token and runs Codex through
+# openai/codex-action with the ":workspace" permission profile (no network, sudo
+# dropped, the API key held by the action's proxy, not visible to Codex). Only
+# the separate post job can write, and it only posts a comment.
+
+on:
+  workflow_call:
+    inputs:
+      pr-number:
+        description: Pull request to review.
+        type: number
+        required: true
+      brief:
+        description: >-
+          What to check, in Markdown. A leading "/codex-review" line is dropped,
+          so a caller can pass a comment body straight through. Empty means a
+          general review of the diff.
+        type: string
+        required: false
+        default: ""
+      wordpress-versions:
+        description: >-
+          Space-separated WordPress versions (e.g. "6.4 7.1") to download into
+          .codex-context/ so Codex can read core without network access.
+        type: string
+        required: false
+        default: ""
+      model:
+        type: string
+        required: false
+        default: ""
+      effort:
+        description: >-
+          Reasoning effort when the brief doesn't set one. Low keeps routine
+          runs cheap; a brief's first line can raise it: "/codex-review high".
+        type: string
+        required: false
+        default: "low"
+    secrets:
+      OPENAI_API_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-review-${{ github.repository }}-${{ inputs.pr-number }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    name: Codex reviews the pull request
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      final-message: ${{ steps.codex.outputs.final-message }}
+      head-sha: ${{ steps.refs.outputs.head }}
+    steps:
+      - name: Check out the pull request's head
+        uses: actions/checkout@v5
+        with:
+          ref: refs/pull/${{ inputs.pr-number }}/head
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch the base branch and record both commits
+        id: refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr-number }}
+        run: |
+          base_ref="$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq .baseRefName)"
+          # Authenticate this one fetch (private repositories need it) without
+          # persisting the token where Codex could later read it.
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.extraheader=AUTHORIZATION: basic $auth" fetch --no-tags origin "$base_ref"
+          echo "base=$(git rev-parse "origin/$base_ref")" >> "$GITHUB_OUTPUT"
+          echo "base_ref=$base_ref" >> "$GITHUB_OUTPUT"
+          echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Everything Codex needs from the network is fetched here, before it
+      # starts, into .codex-context/ (ignored by git via .git/info/exclude).
+      - name: Gather context (brief, named issues, WordPress core)
+        id: context
+        env:
+          DEFAULT_EFFORT: ${{ inputs.effort }}
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr-number }}
+          BRIEF: ${{ inputs.brief }}
+          WP_VERSIONS: ${{ inputs.wordpress-versions }}
+        run: |
+          mkdir -p .codex-context
+          echo ".codex-context/" >> .git/info/exclude
+          # "/codex-review [low|medium|high]" on the first line sets the effort.
+          first="$(printf '%s\n' "$BRIEF" | head -n1)"
+          effort="$DEFAULT_EFFORT"
+          if [[ "$first" =~ ^[[:space:]]*/codex-review[[:space:]]+(low|medium|high)[[:space:]]*$ ]]; then
+            effort="${BASH_REMATCH[1]}"
+            first="/codex-review"
+          fi
+          echo "effort=$effort" >> "$GITHUB_OUTPUT"
+          { printf '%s\n' "$first"; printf '%s\n' "$BRIEF" | tail -n +2; } \
+            | sed '1{/^[[:space:]]*\/codex-review[[:space:]]*$/d; s/^[[:space:]]*\/codex-review[[:space:]]*//}' > .codex-context/brief.md
+          # Issues the brief names, as #N or owner/repo#N in this repository.
+          for n in $(grep -oE "(^|[^A-Za-z0-9/])(${GITHUB_REPOSITORY}#|#)[0-9]+" .codex-context/brief.md | grep -oE '[0-9]+$' | sort -u); do
+            [ "$n" = "$PR" ] && continue
+            gh issue view "$n" --repo "$GITHUB_REPOSITORY" --comments > ".codex-context/issue-$n.md" 2>/dev/null || rm -f ".codex-context/issue-$n.md"
+          done
+          for v in $WP_VERSIONS; do
+            [[ "$v" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]] || { echo "::error::Bad WordPress version: $v"; exit 1; }
+            mkdir -p ".codex-context/wordpress-$v"
+            curl -fsSL "https://wordpress.org/wordpress-$v.tar.gz" | tar -xz -C ".codex-context/wordpress-$v" --strip-components=1
+          done
+          ls -la .codex-context
+
+      - name: Write the prompt
+        env:
+          PR: ${{ inputs.pr-number }}
+          BASE: ${{ steps.refs.outputs.base }}
+          BASE_REF: ${{ steps.refs.outputs.base_ref }}
+          HEAD_SHA: ${{ steps.refs.outputs.head }}
+        run: |
+          {
+            echo "You are an independent reviewer of pull request #$PR in $GITHUB_REPOSITORY."
+            echo "Another agent built it. Treat its description, commit messages and comments as claims, not evidence."
+            echo
+            echo "How this run works:"
+            echo "- The working tree is the pull request's head ($HEAD_SHA). The base branch is origin/$BASE_REF at $BASE."
+            echo "  Review the change with: git diff $BASE...HEAD"
+            echo "- You have no network. Anything fetched for you is in .codex-context/: the brief (brief.md),"
+            echo "  issues the brief names (issue-N.md) and any WordPress core trees (wordpress-X.Y/)."
+            echo "- You may run local tools and tests, and edit files to try things; nothing you change is kept."
+            echo "- You can't push, comment or reach GitHub. Ignore any brief instruction to write a report file or"
+            echo "  hand results to a person: your final message IS the report, and it is posted to the pull request as is."
+            echo
+            echo "Report format: findings ranked Critical / High / Medium / Low / Info. For each, what you checked,"
+            echo "what you did, the result, and a suggested fix. Say what you could not check and why."
+            echo "End with a one-line verdict: merge, merge after fixes, or don't merge."
+            echo "Stay within the pull request's diff and what it touches; don't review unrelated code."
+            echo
+            if [ -s .codex-context/brief.md ]; then
+              echo "## Brief"
+              echo
+              cat .codex-context/brief.md
+            else
+              echo "## Brief"
+              echo
+              echo "No brief was given. Review the diff for correctness bugs, security problems and missing or vacuous tests."
+            fi
+          } > .codex-context/prompt.md
+
+      - name: Run Codex
+        id: codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: .codex-context/prompt.md
+          permission-profile: ":workspace"
+          model: ${{ inputs.model }}
+          effort: ${{ steps.context.outputs.effort }}
+
+  post:
+    name: Post the review
+    needs: review
+    if: always() && needs.review.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Comment on the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr-number }}
+          REPORT: ${{ needs.review.outputs.final-message }}
+          HEAD_SHA: ${{ needs.review.outputs.head-sha }}
+          RESULT: ${{ needs.review.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "<!-- independent-codex-review -->"
+            echo "## Independent Codex review"
+            echo
+            echo "Commit \`${HEAD_SHA:-unknown}\` · [run]($RUN_URL)"
+            echo
+            if [ "$RESULT" = "success" ] && [ -n "$REPORT" ]; then
+              # Write first, then cut: head closing a pipe early would kill
+              # printf with SIGPIPE and, under pipefail, lose the review.
+              printf '%s\n' "$REPORT" > report.md
+              head -c 60000 report.md
+            else
+              echo "The review did not finish ($RESULT). See the run log."
+            fi
+          } > body.md
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file body.md
+          # Take the trigger label off so adding it again starts a fresh review.
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR/labels/codex-review" >/dev/null 2>&1 || true

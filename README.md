@@ -200,6 +200,7 @@ node eval/harness/run.mjs
 - [Packaging](docs/packaging.md) - Build and distribution
 - [Compatibility Policy](docs/compatibility-policy.md) - Version targeting
 - [QA and AI-testing process](docs/qa-process.md) - Risk tiers, separate testers, labs and guardrails for agent-built plugins
+- [Independent Codex review in CI](docs/codex-review.md) - Reusable workflow: `/codex-review` on a PR runs Codex with a brief and posts the report
 
 ## License
 
