@@ -157,12 +157,14 @@ the owner's exemptions. The setup for one maintainer working with agents:
    "Guardrail changes reviewed", fails any pull request that adds, changes,
    removes or renames the workflow files, the checker, its own test and
    fixtures, or any probe file, until Dan reads those diffs and adds the
-   `guardrail-reviewed` label. Agents put guardrail changes in their own pull
+   `guardrail-reviewed` label. A later push that changes any of those files
+   takes the label off again, so the approval covers the diff Dan read. Agents put guardrail changes in their own pull
    request, never bundled with a feature. Ordinary tests are reviewed at merge
    like any other code; gating them by label would put one on nearly every pull
    request.
 4. **Tier 3 can be made mechanical.** With the `tier-3` label, the probe job
-   fails when the pull request adds no probe file. The tier itself is a review
+   fails when the pull request adds no probe file, judged by the checker's own
+   rule (a `.md` probe file, not a README or placeholder). The tier itself is a review
    judgment, and whether every probe result was resolved is read in the
    evidence record, not checked by the gate.
 5. **The checks are required, with no bypass.** Otherwise a failing check is a
