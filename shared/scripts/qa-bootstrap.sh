@@ -35,6 +35,12 @@
 #             branch protection requires, plus "Tester probes came first" and
 #             "Guardrail changes reviewed" when the repo has
 #             .github/workflows/lab-probes.yml
+#   --check-app ID
+#             GitHub App that must report each required check; default 15368,
+#             GitHub Actions. Pinning the source stops anyone holding a token
+#             with repo scope (the agent account, for one) from posting a fake
+#             green commit status under a required check's name. Pass "any"
+#             only if a required check comes from another app or CI.
 #   --files   local clone to copy the lab-probes guard into (then open a PR)
 #   --apply   make the changes (default is a dry run)
 #
@@ -55,6 +61,7 @@ GUARD_FILES=(
 repo=""
 bot=""
 checks=""
+check_app=15368
 files_dir=""
 apply=0
 
@@ -90,9 +97,10 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 		--bot) bot="${2:?--bot needs a login}"; shift 2 ;;
 		--checks) checks="${2:?--checks needs a comma-separated list}"; shift 2 ;;
+		--check-app) check_app="${2:?--check-app needs an app ID or any}"; shift 2 ;;
 		--files) files_dir="${2:?--files needs a directory}"; shift 2 ;;
 		--apply) apply=1; shift ;;
-		-h|--help) sed -n '2,35p' "$0"; exit 0 ;;
+		-h|--help) sed -n '2,/^# Needs/p' "$0"; exit 0 ;;
 		-*) die "unknown option $1" ;;
 		*) [ -z "$repo" ] || die "one repository at a time"; repo="$1"; shift ;;
 	esac
@@ -169,7 +177,9 @@ fi
 if [ "$is_fork" = "true" ]; then
 	checks=""
 fi
-checks_json="$(jq -cn --arg c "$checks" '$c | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map({context: .})')"
+[ "$check_app" = "any" ] || [[ "$check_app" =~ ^[0-9]+$ ]] || die "--check-app takes a numeric app ID or any, got $check_app"
+checks_json="$(jq -cn --arg c "$checks" --arg app "$check_app" '$c | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))
+	| map(if $app == "any" then {context: .} else {context: ., integration_id: ($app | tonumber)} end)')"
 # A check name is a job name. Anything that looks like JSON or a URL is an API
 # error leaking through, so refuse it rather than require a check that never runs.
 bad="$(jq -r '.[].context | select(test("[{}\"\\\\]|https?://|^\\s*$"))' <<<"$checks_json")"
@@ -208,6 +218,11 @@ if [ "$checks_json" = "[]" ] && [ "$is_fork" != "true" ]; then
 	say "   requires a pull request and blocks force pushes and deletion."
 elif [ "$checks_json" != "[]" ]; then
 	say "   Required checks: $(jq -r 'map(.context) | join(", ")' <<<"$checks_json")"
+	if [ "$check_app" = "any" ]; then
+		say "   Any source may report them (--check-app any): a token with repo scope could fake one."
+	else
+		say "   Only app $check_app may report them$([ "$check_app" = 15368 ] && echo ' (GitHub Actions)')."
+	fi
 fi
 if [ "$private" = "true" ] && [ "$owner_type" = "User" ]; then
 	say "   Note: rulesets on a private repository owned by a personal account need GitHub Pro."

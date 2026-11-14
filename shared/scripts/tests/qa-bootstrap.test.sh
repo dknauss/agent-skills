@@ -69,6 +69,7 @@ run() {
 expect_out() { if ! grep -qF -- "$2" <<<"$out"; then echo "FAIL $1: output lacks: $2"; echo "$out" | sed 's/^/    /'; fail=$((fail + 1)); fi; }
 expect_no_write() { if grep -qE '^(PUT|POST|PATCH|DELETE) ' "$work/calls.log"; then echo "FAIL $1: wrote to GitHub:"; sed 's/^/    /' "$work/calls.log"; fail=$((fail + 1)); fi; }
 put_checks() { grep '^PUT repos/o/r/rulesets/11 ' "$work/calls.log" | sed 's/^PUT [^ ]* //' | jq -c '[.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context]'; }
+put_apps() { grep '^PUT repos/o/r/rulesets/11 ' "$work/calls.log" | sed 's/^PUT [^ ]* //' | jq -c '[.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].integration_id] | unique'; }
 
 four='["Lint and unit tests","Counterpart recorded","Tester probes came first","Guardrail changes reviewed"]'
 existing='[{"id":11,"name":"QA process: protect default branch"},{"id":12,"name":"QA process: release tags"}]'
@@ -79,6 +80,10 @@ export FAKE_PROBES=200 FAKE_RULESET="$existing_full"
 FAKE_PROTECTION=404 FAKE_RULESETS="$existing" run "re-run with protection 404" 0 --apply
 got="$(put_checks)"
 [ "$got" = "$four" ] || { echo "FAIL re-run with protection 404: PUT checks $got, expected $four"; fail=$((fail + 1)); }
+# Every required check is pinned to GitHub Actions, so a commit status posted
+# with a repo-scoped token can't stand in for one.
+got="$(put_apps)"
+[ "$got" = "[15368]" ] || { echo "FAIL checks pinned to GitHub Actions: integration_id $got, expected [15368]"; fail=$((fail + 1)); }
 
 # 2. First run: classic protection supplies two checks, lab-probes adds two.
 FAKE_PROTECTION='{"required_status_checks":{"checks":[{"context":"Lint and unit tests"},{"context":"Counterpart recorded"}]}}' FAKE_RULESETS='[]' run "first run" 0
@@ -102,6 +107,16 @@ expect_no_write "error text as --checks refused"
 # 6. No lab-probes workflow (404) is fine: no guard checks added.
 FAKE_PROTECTION='{"required_status_checks":{"checks":[{"context":"lint"}]}}' FAKE_RULESETS='[]' FAKE_PROBES=404 run "no lab-probes" 0
 expect_out "no lab-probes" "Required checks: lint"
+
+# 7. --check-app any leaves the source open, and says so.
+FAKE_PROTECTION=404 FAKE_RULESETS="$existing" run "--check-app any" 0 --apply --check-app any
+got="$(put_apps)"
+[ "$got" = "[null]" ] || { echo "FAIL --check-app any: integration_id $got, expected [null]"; fail=$((fail + 1)); }
+expect_out "--check-app any" "a token with repo scope could fake one"
+
+# 8. A bad --check-app is refused before anything is written.
+FAKE_PROTECTION=404 FAKE_RULESETS="$existing" run "bad --check-app refused" nonzero --apply --check-app actions
+expect_no_write "bad --check-app refused"
 
 if [ "$fail" -gt 0 ]; then
 	echo "$fail qa-bootstrap assertion(s) failed."
