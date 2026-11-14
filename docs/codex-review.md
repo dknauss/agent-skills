@@ -44,6 +44,12 @@ jobs:
        github.event.label.name == 'codex-review' &&
        github.event.sender.login == github.repository_owner)
     uses: dknauss/agent-skills/.github/workflows/codex-review.yml@trunk
+    # A caller can only narrow token permissions, so grant what the shared
+    # workflow's jobs use.
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     with:
       pr-number: ${{ github.event.issue.number || github.event.pull_request.number }}
       brief: ${{ github.event.comment.body }}

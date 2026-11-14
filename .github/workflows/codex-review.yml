@@ -85,7 +85,10 @@ jobs:
           PR: ${{ inputs.pr-number }}
         run: |
           base_ref="$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq .baseRefName)"
-          git fetch --no-tags origin "$base_ref"
+          # Authenticate this one fetch (private repositories need it) without
+          # persisting the token where Codex could later read it.
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.extraheader=AUTHORIZATION: basic $auth" fetch --no-tags origin "$base_ref"
           echo "base=$(git rev-parse "origin/$base_ref")" >> "$GITHUB_OUTPUT"
           echo "base_ref=$base_ref" >> "$GITHUB_OUTPUT"
           echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -196,7 +199,10 @@ jobs:
             echo "Commit \`${HEAD_SHA:-unknown}\` · [run]($RUN_URL)"
             echo
             if [ "$RESULT" = "success" ] && [ -n "$REPORT" ]; then
-              printf '%s\n' "$REPORT" | head -c 60000
+              # Write first, then cut: head closing a pipe early would kill
+              # printf with SIGPIPE and, under pipefail, lose the review.
+              printf '%s\n' "$REPORT" > report.md
+              head -c 60000 report.md
             else
               echo "The review did not finish ($RESULT). See the run log."
             fi
