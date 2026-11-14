@@ -151,10 +151,21 @@ pull request it grades, and agents that act as the repository owner inherit
 the owner's exemptions. The setup for one maintainer working with agents:
 
 1. **Merges, tags and releases are Dan's acts.** Agents push to their own
-   branches and open draft pull requests. For local agents this is enforced
-   (points 6 to 8 below). For cloud sessions, which act as Dan through the
-   GitHub tools, it is enforced only by instruction: they merge when Dan says
-   so in the thread, and the rulesets make sure what they merge is green.
+   branches and open draft pull requests. What actually enforces that differs
+   by who the agent is:
+   - **The machine account** (local agents, points 8 and 9) can't edit
+     rulesets, workflows or `v*` tags. It *can* add labels, push to any
+     unprotected branch and merge a pull request whose required checks pass.
+     The "Maintainer sign-off" check (point 4) is what stops it merging its own
+     work, and the label checks (point 3) are what stop it approving itself.
+     Until the November 2026 red-team pass neither existed: the bot added
+     `guardrail-reviewed` to Keel #378 and #380 itself, and nothing objected.
+   - **Cloud sessions** act as Dan through the Claude GitHub App. They can
+     merge, add labels and push workflow files to their own branch, so for
+     them "merges are Dan's" is enforced only by instruction. The label checks
+     reject labels they add (GitHub records the app), but a pull request whose
+     every push came from Dan's account needs no sign-off, so a cloud session
+     can still merge one when told to, or when it shouldn't.
 2. **The default branch grades the pull request.** The guard workflow runs on
    `pull_request_target`, so the workflow file and the checker both come from
    the base branch. It checks out the base commit, fetches the pull request's
@@ -162,21 +173,38 @@ the owner's exemptions. The setup for one maintainer working with agents:
    branch runs. A branch can propose a weaker check, but it isn't graded by it.
    (On plain `pull_request`, the branch's own workflow decides whether the
    checker runs at all.)
-3. **Changes to the checks need a person's label.** A separate required job,
+3. **Changes to the checks need Dan's own label.** A separate required job,
    "Guardrail changes reviewed", fails any pull request that adds, changes,
-   removes or renames the workflow files, the checker, its own test and
+   removes or renames the workflow files, the checkers, their own tests and
    fixtures, or any probe file, until Dan reads those diffs and adds the
-   `guardrail-reviewed` label. A later push that changes any of those files
-   takes the label off again, so the approval covers the diff Dan read. Agents put guardrail changes in their own pull
-   request, never bundled with a feature. Ordinary tests are reviewed at merge
-   like any other code; gating them by label would put one on nearly every pull
-   request.
-4. **Tier 3 can be made mechanical.** With the `tier-3` label, the probe job
+   `guardrail-reviewed` label. Only a label Dan adds by hand counts: the
+   checker (`bin/check-maintainer-signoff`) reads the label's last `labeled`
+   event and requires the actor to be on the workflow's `MAINTAINERS` list
+   with no `performed_via_github_app`, so neither the machine account nor a
+   cloud session acting as Dan can add it. It also reads, from the repository
+   activity API, which commit was on the branch when the label went on; if a
+   guardrail file changed since, it takes the label off and fails. It decides
+   all of that from GitHub's records on every run, so cancelling a run or
+   starting a fresh one with another label changes nothing. Agents put
+   guardrail changes in their own pull request, never bundled with a feature.
+   Ordinary tests are reviewed at merge like any other code; gating them by
+   label would put one on nearly every pull request.
+4. **Pushes by anyone else need Dan's sign-off.** A third required job,
+   "Maintainer sign-off", reads who pushed to the branch from the activity
+   API. If every push came from a maintainer account, it passes. If anyone
+   else pushed (the machine account, an outside contributor), it fails until
+   Dan reads the pull request and adds `maintainer-approved` by hand, after
+   the last such push. A required approving review would do this natively,
+   but GitHub won't let an author approve their own pull request, cloud
+   sessions open theirs as Dan, and an admin bypass for Dan would be every
+   cloud session's bypass too. Reviews also don't record which app made them,
+   so a cloud session approving a bot's pull request would look like Dan.
+5. **Tier 3 can be made mechanical.** With the `tier-3` label, the probe job
    fails when the pull request adds no probe file, judged by the checker's own
    rule (a `.md` probe file, not a README or placeholder). The tier itself is a review
    judgment, and whether every probe result was resolved is read in the
    evidence record, not checked by the gate.
-5. **The checks are required, with no bypass.** Otherwise a failing check is a
+6. **The checks are required, with no bypass.** Otherwise a failing check is a
    warning, and the owner's exemption is the agent's exemption. Each required
    check is also pinned to GitHub Actions (app ID 15368). A check matched by
    name alone can be satisfied by a commit status that anyone with a
@@ -193,24 +221,42 @@ owner's credentials, the guardrails here are defaults, not boundaries.
 
 What already holds in cloud sessions: the git proxy only lets an agent push to
 its own branch, and it refuses tag pushes, branch deletes and repository
-settings changes. The GitHub tools available there have no way to edit
-rulesets. They can merge.
+settings changes, including secrets, environments and the Actions API. The
+GitHub tools available there have no way to edit rulesets. They can merge,
+and they can push workflow files to their own branch.
+
+**A workflow on any branch runs as soon as the branch is pushed**, before any
+pull request, label or review, and it can read every repository-level secret.
+The red-team pass proved this on Keel: a throwaway workflow on a cloud
+session's branch could read `WP_ORG_SVN_USERNAME`, `WP_ORG_SVN_PASSWORD` and
+`OPENAI_API_KEY` (it reported only set or unset). So secrets live in the
+environment of the one job that needs them, with a deployment policy: Keel's
+SVN credentials in `wordpress-org`, which only `v*` tags can deploy to and Dan
+must approve, and the OpenAI key in `codex-review`, which only the default
+branch can use (`pull_request_target` and `issue_comment` runs use the default
+branch's ref). `qa-bootstrap.sh` lists any repository-level secrets it finds.
 
 The free route, in order of payoff:
 
-6. **Rulesets with an empty bypass list on the default branch.** Require a pull
+7. **Rulesets with an empty bypass list on the default branch.** Require a pull
    request and the status checks (including both guard jobs), block force
    pushes and deletion. Free on public repositories. On a private repository
    owned by a free personal account they aren't enforced; AX is private, so it
-   needs GitHub Pro, and without it relies on points 7 and 8.
-7. **A tag ruleset and a deploy approval.** A Write collaborator can push a
+   needs GitHub Pro, and without it relies on points 8 and 9.
+8. **A tag ruleset, a deploy approval and immutable releases.** A Write collaborator can push a
    `v*` tag, and a tag push can start a deploy to WordPress.org. A tag ruleset
    on `refs/tags/v*` that blocks creation, update and deletion, with only the
    Repository admin role allowed to bypass, keeps tags Dan's. Deploy jobs run
    in a GitHub Environment (Keel's is `wordpress-org`) with Dan as required
-   reviewer. GitHub creates a missing environment with no protection, so check
-   the reviewer is really set.
-8. **A free machine account for local agents.** GitHub allows one machine
+   reviewer, and only `v*` tags may deploy to it. GitHub creates a missing
+   environment with no protection, so check the reviewer is really set. A
+   tag ruleset doesn't protect a release's files: anyone with Write can replace
+   a published release's zip and its `SHA256SUMS` together. Immutable releases
+   (a repository setting) stop that for releases published after it is on.
+   Keel's rolling `latest` pre-release is re-uploaded by CI on every merge; it
+   stays editable because it was published before the setting, so don't
+   delete and recreate it.
+9. **A free machine account for local agents.** GitHub allows one machine
    account per person. Add it as a collaborator with Write, never Admin. Give
    it a **classic** personal access token with the `repo` scope and **not** the
    `workflow` scope: GitHub refuses pushes that touch `.github/workflows/` from
@@ -248,9 +294,23 @@ inside an agent session: `gh api user --jq .login` and
 `git ls-remote https://github.com/dknauss/agency-experience` must both work as
 the machine account and nothing else; `ssh -T git@github.com` must fail.
 
-Required CODEOWNERS review is left out for now. GitHub won't let an author
-approve their own pull request, and cloud agents open pull requests as Dan, so
-requiring his review would block every one of them.
+Required CODEOWNERS review is left out, for the reason in point 4: cloud
+agents open pull requests as Dan, and he can't approve his own. The label
+checks cover the same paths (`.github/`, the checkers, `docs/review/probes/`)
+without that problem.
+
+### Known gaps
+
+These are the holes the red-team pass of November 2026 left open, on purpose
+or because nothing at the repository level can close them.
+
+| Gap | Why it stays | What limits it |
+| --- | --- | --- |
+| A cloud session can merge a pull request only Dan's account pushed to | It is Dan's account; GitHub can't tell his merge click from the app's | Instruction; merges only on Dan's word in the thread |
+| The builder session can post the `/codex-review` or `/codex-brief` comment that briefs its own reviewer | Coordinator and builder are both Dan through the same app | Briefs come from the coordinator by instruction; Dan can post them by hand for Tier 3 |
+| `Lab-Role: tester` trailers and `Tester:` lines can be typed by anyone | Git records what the committer wrote | Dan's `guardrail-reviewed` label on every probe file; the record names who did what |
+| The machine account can edit other people's comments | Write includes it | Edit history is visible; `codex-review.sh` should skip edited `/codex-brief` comments |
+| A shared reusable workflow called at `@trunk` runs whatever is on agent-skills' `trunk` | Convenience | Pin callers to a commit SHA; protect `trunk` with the same rulesets |
 
 ## Setting up a repository
 
@@ -280,7 +340,7 @@ the lab pass and its record go in the upstream ticket or pull request.
 | Repository | Setup |
 | --- | --- |
 | Keel | Full, guard in place |
-| Agency Experience | Full once on GitHub Pro; until then points 7 and 8 only |
+| Agency Experience | Full once on GitHub Pro; until then points 8 and 9 only |
 | Better by Default | Full; guard to be ported |
 | WP Texturize Inline Quote Fix | Full; guard to be ported |
 | wordpress-develop (fork) | Fork setup |
@@ -300,4 +360,4 @@ and [A guardrail your agent can bypass isn't a guardrail](https://badsector.blog
 | Wipe the lab or keep a golden seed? Snapshot before each accept | Labs: seed, don't restore; snapshot |
 | A required check in the repository's own workflow file can be weakened in the same pull request | Guarding the guardrails 2 and 3 |
 | A review only holds if the agent can't rewrite the test it's graded on | Principle 3 |
-| Own worktree, no push rights, only a human merge ships | Guarding the guardrails 1, 6 to 8 |
+| Own worktree, no push rights, only a human merge ships | Guarding the guardrails 1, 4, 7 to 9 |

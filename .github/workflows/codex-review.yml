@@ -48,8 +48,13 @@ on:
         required: false
         default: "low"
     secrets:
+      # Optional: the key should live in the caller repository's codex-review
+      # environment, not as a repository secret. A repository secret can be
+      # read by any workflow on any branch the moment the branch is pushed;
+      # an environment secret limited to the default branch can't. Callers
+      # that still pass it explicitly keep working.
       OPENAI_API_KEY:
-        required: true
+        required: false
 
 permissions:
   contents: read
@@ -63,6 +68,10 @@ jobs:
     name: Codex reviews the pull request
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # The key comes from this environment when it has one. Give the environment
+    # a deployment policy of the default branch only: pull_request_target and
+    # issue_comment runs use the default branch's ref, a pushed branch doesn't.
+    environment: codex-review
     permissions:
       contents: read
       issues: read

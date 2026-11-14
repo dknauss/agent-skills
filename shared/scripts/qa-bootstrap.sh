@@ -7,7 +7,11 @@
 #   2. The agent machine account as a Write collaborator (never Admin).
 #   3. A tag ruleset on v* that only admins can bypass, so an agent with Write
 #      can't push a release tag. If a workflow deploys through a GitHub
-#      Environment (e.g. wordpress-org), checks that it has a required reviewer.
+#      Environment (e.g. wordpress-org), makes sure it has a required reviewer
+#      and only deploys from v* tags, and warns about repository-level secrets:
+#      any workflow on any branch can read those, before any review.
+#   3b. Immutable releases, so an account with Write can't swap a published
+#      release's zip or checksums.
 #   4. Head-branch auto-delete on merge.
 #   5. Optionally, copies the lab-probes guard (workflow, checker, its test and
 #      the probes README) from Keel into a local clone, for a pull request.
@@ -44,7 +48,8 @@
 #             ruleset already requires (on a re-run) and the checks classic
 #             branch protection requires, plus "Tester probes came first" and
 #             "Guardrail changes reviewed" when the repo has
-#             .github/workflows/lab-probes.yml
+#             .github/workflows/lab-probes.yml, and "Maintainer sign-off" once
+#             that workflow has the job and it has run at least once
 #   --check-app ID
 #             GitHub App that must report each required check; default 15368,
 #             GitHub Actions. Pinning the source stops anyone holding a token
@@ -52,6 +57,9 @@
 #             green commit status under a required check's name. Pass "any"
 #             only if a required check comes from another app or CI.
 #   --files   local clone to copy the lab-probes guard into (then open a PR)
+#   --no-immutable-releases
+#             leave release immutability off (e.g. a repo that republishes a
+#             rolling release with the same tag)
 #   --apply   make the changes (default is a dry run)
 #
 # Needs: gh (signed in), jq.
@@ -66,6 +74,8 @@ GUARD_FILES=(
 	"bin/check-lab-probes"
 	"tests/lab-probes-check.php"
 	"docs/review/probes/README.md"
+	"bin/check-maintainer-signoff"
+	"tests/maintainer-signoff-check.php"
 )
 
 repo=""
@@ -75,6 +85,10 @@ check_app=15368
 allow_unseen=0
 files_dir=""
 apply=0
+immutable=1
+# Checks added by default only once GitHub has seen them run; never a reason
+# to abort, since a new job has to merge before it can report.
+optional_checks=""
 
 die() { echo "qa-bootstrap: $*" >&2; exit 1; }
 say() { echo "$*"; }
@@ -133,6 +147,7 @@ while [ $# -gt 0 ]; do
 		--check-app) check_app="${2:?--check-app needs an app ID or any}"; shift 2 ;;
 		--files) files_dir="${2:?--files needs a directory}"; shift 2 ;;
 		--apply) apply=1; shift ;;
+		--no-immutable-releases) immutable=0; shift ;;
 		-h|--help) sed -n '2,/^# Needs/p' "$0"; exit 0 ;;
 		-*) die "unknown option $1" ;;
 		*) [ -z "$repo" ] || die "one repository at a time"; repo="$1"; shift ;;
@@ -198,11 +213,15 @@ if [ -z "$checks" ]; then
 		add_check "$c"
 	done < <(jq -r '.required_status_checks.checks[]?.context // empty, .required_status_checks.contexts[]? // empty' <<<"$protection" | awk '!seen[$0]++')
 	rc=0
-	gh_get "repos/$repo/contents/.github/workflows/lab-probes.yml?ref=$default_branch" >/dev/null || rc=$?
+	probes_yml="$(gh_get "repos/$repo/contents/.github/workflows/lab-probes.yml?ref=$default_branch" -H "Accept: application/vnd.github.raw")" || rc=$?
 	if [ "$rc" -eq 0 ]; then
 		for c in "Tester probes came first" "Guardrail changes reviewed"; do
 			add_check "$c"
 		done
+		if grep -q 'name: Maintainer sign-off' <<<"$probes_yml"; then
+			add_check "Maintainer sign-off"
+			optional_checks="Maintainer sign-off"
+		fi
 	elif [ "$rc" -ne 4 ]; then
 		die "can't check for lab-probes.yml; nothing was changed."
 	fi
@@ -251,6 +270,13 @@ if [ "$checks_json" != "[]" ]; then
 		[ "$rc" -eq 0 ] || [ "$rc" -eq 4 ] || die "can't read check runs for $sha; nothing was changed."
 		seen="$seen"$'\n'"$runs"
 	done
+	# A default check that hasn't run yet is left out for now, not fatal: a new
+	# job has to merge before it can report.
+	if [ -n "$optional_checks" ] && ! grep -qxF -- "$optional_checks" <<<"$seen"; then
+		say "   \"$optional_checks\" is in lab-probes.yml but hasn't run on a pull request yet: left out"
+		say "   for now. Run this again after it has reported once."
+		checks_json="$(jq -c --arg c "$optional_checks" 'map(select(.context != $c))' <<<"$checks_json")"
+	fi
 	unseen="$(jq -r '.[].context' <<<"$checks_json" | while IFS= read -r c; do grep -qxF -- "$c" <<<"$seen" || echo "$c"; done)"
 	if [ -n "$unseen" ]; then
 		if [ "$allow_unseen" -eq 1 ]; then
@@ -262,6 +288,12 @@ if [ "$checks_json" != "[]" ]; then
 	fi
 fi
 
+# No required approving review: GitHub won't let an author approve their own
+# pull request, and cloud agent sessions open theirs as the owner, so requiring
+# one would block them all, and an admin bypass would hand every such session
+# the bypass too. Instead the "Maintainer sign-off" check (lab-probes.yml) fails
+# when anyone other than a maintainer pushed to the branch, until the
+# maintainer adds the maintainer-approved label by hand.
 ruleset="$(jq -n --arg name "$RULESET_NAME" --argjson checks "$checks_json" --argjson fork "$is_fork" '{
 	name: $name,
 	target: "branch",
@@ -356,19 +388,81 @@ else
 	if [ -z "$envs" ]; then
 		say "   No workflow deploys through an environment."
 	fi
+	me_id="$(gh api user --jq .id)"
 	for env in $envs; do
-		reviewers="$(gh api "repos/$repo/environments/$env" --jq '[.protection_rules[]? | select(.type == "required_reviewers") | .reviewers[]?.reviewer.login] | join(",")' 2>/dev/null || true)"
+		env_info="$(gh api "repos/$repo/environments/$env" 2>/dev/null || echo '{}')"
+		reviewers="$(jq -r '[.protection_rules[]? | select(.type == "required_reviewers") | .reviewers[]?.reviewer.login] | join(",")' <<<"$env_info")"
+		custom="$(jq -r '.deployment_branch_policy.custom_branch_policies // false' <<<"$env_info")"
+		tag_policy=""
+		if [ "$custom" = "true" ]; then
+			tag_policy="$(gh api "repos/$repo/environments/$env/deployment-branch-policies" --jq '[.branch_policies[] | "\(.type // "branch"):\(.name)"] | join(",")' 2>/dev/null || true)"
+		fi
 		if [ -n "$reviewers" ]; then
 			say "   Environment $env requires approval from: $reviewers"
-		else
-			me_id="$(gh api user --jq .id)"
-			plan "make $me approve every deploy through environment $env"
+		fi
+		if [ "$custom" = "true" ] && [ "$tag_policy" = "tag:v*" ]; then
+			say "   Environment $env only deploys from v* tags."
+		fi
+		# One PUT sets both, since a PUT replaces the deployment policy too.
+		if [ -z "$reviewers" ] || [ "$custom" != "true" ]; then
+			plan "make $me approve every deploy through environment $env, and allow only v* tags to deploy"
 			if [ "$apply" -eq 1 ]; then
-				jq -n --argjson id "$me_id" '{reviewers: [{type: "User", id: $id}], prevent_self_review: false}' \
+				jq -n --argjson id "$me_id" '{reviewers: [{type: "User", id: $id}], prevent_self_review: false,
+					deployment_branch_policy: {protected_branches: false, custom_branch_policies: true}}' \
 					| gh api -X PUT "repos/$repo/environments/$env" --input - >/dev/null && say "   Done."
 			fi
 		fi
+		if [ "$tag_policy" != "tag:v*" ]; then
+			[ -z "$tag_policy" ] || say "   Environment $env deploys from: $tag_policy. Expected only tag:v*; remove the others at https://github.com/$repo/settings/environments"
+			plan "add the deployment policy tag v* to environment $env"
+			if [ "$apply" -eq 1 ]; then
+				gh api -X POST "repos/$repo/environments/$env/deployment-branch-policies" -f name='v*' -f type=tag >/dev/null 2>&1 \
+					&& say "   Added." || say "   GitHub refused the tag policy (it may already exist)."
+			fi
+		fi
 	done
+fi
+say
+
+# --- 2b. Repository secrets and immutable releases ------------------------
+say "2b. Secrets and releases"
+if [ "$is_fork" = "true" ]; then
+	say "   Fork: skipped."
+else
+	# A repository-level secret is readable by any workflow on any branch, as
+	# soon as the branch is pushed: no pull request, label or review comes
+	# first. Anyone who can push a workflow file (the owner's token, so every
+	# cloud agent session acting as the owner) can read it. Environment secrets
+	# with a deployment policy are only handed to jobs on the allowed refs.
+	rc=0
+	repo_secrets="$(gh_get "repos/$repo/actions/secrets?per_page=100" --jq '.secrets[].name')" || rc=$?
+	if [ "$rc" -ne 0 ]; then
+		say "   Couldn't list repository secrets; check them by hand: gh secret list -R $repo"
+	elif [ -z "$repo_secrets" ]; then
+		say "   No repository-level secrets."
+	else
+		say "   Repository-level secrets (any workflow on any branch can read these):"
+		printf '     %s\n' $repo_secrets
+		say "   Move each one into the environment of the only job that needs it, with a deployment"
+		say "   policy, then delete the repository copy, e.g.:"
+		say "     gh secret set NAME --env ENV -R $repo && gh secret delete NAME -R $repo"
+	fi
+	rc=0
+	imm="$(gh_get "repos/$repo/immutable-releases" --jq '.enabled')" || rc=$?
+	if [ "$rc" -ne 0 ]; then
+		say "   Couldn't read the release immutability setting."
+	elif [ "$imm" = "true" ]; then
+		say "   Releases are immutable."
+	elif [ "$immutable" -eq 0 ]; then
+		say "   Releases are mutable (--no-immutable-releases): an account with Write can replace a"
+		say "   published release's assets, checksums included."
+	else
+		plan "make new releases immutable, so their assets and tag can't be changed after publishing"
+		if [ "$apply" -eq 1 ]; then
+			gh api -X PUT "repos/$repo/immutable-releases" >/dev/null && say "   On." \
+				|| say "   GitHub refused (see above)."
+		fi
+	fi
 fi
 say
 
@@ -435,7 +529,7 @@ else
 	say "   Then commit them on a branch, adjust any Keel-specific wording, and open a pull request."
 fi
 if [ "$is_fork" != "true" ]; then
-	for label in guardrail-reviewed tier-3; do
+	for label in guardrail-reviewed maintainer-approved tier-3; do
 		if gh api "repos/$repo/labels/$label" >/dev/null 2>&1; then
 			say "   Label $label exists."
 		else
@@ -448,5 +542,6 @@ say
 
 say "Not done by this script (see docs/qa-process.md):"
 say " - Create the machine account and its classic token with the repo scope only (never workflow)."
+say " - Keep the machine account off the MAINTAINERS list in lab-probes.yml."
 say " - Run local agents with only that token: see 'Isolating local agents' in docs/qa-process.md."
 say " - Add a 'Testing process' pointer to the repo's CONTRIBUTING or README."

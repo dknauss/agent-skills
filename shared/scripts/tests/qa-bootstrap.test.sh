@@ -52,7 +52,12 @@ case "$path" in
 	repos/o/r/pulls*) ok '[{"head":{"sha":"abc123"}}]' ;;
 	repos/o/r/commits/abc123/check-runs*) ok "$FAKE_PR_RUNS" ;;
 	repos/o/r/contents/.github/workflows/lab-probes.yml*)
-		case "$FAKE_PROBES" in 404) err 404 "Not Found" ;; *) ok '{}' ;; esac ;;
+		case "$FAKE_PROBES" in 404) err 404 "Not Found" ;; signoff) ok 'jobs:
+  signoff:
+    name: Maintainer sign-off' ;; *) ok '{}' ;; esac ;;
+	repos/o/r/actions/secrets*)
+		case "${FAKE_SECRETS:-404}" in 404) err 404 "Not Found" ;; *) ok "$FAKE_SECRETS" ;; esac ;;
+	repos/o/r/immutable-releases) ok "${FAKE_IMMUTABLE:-{\"enabled\":false}}" ;;
 	repos/o/r/contents/.github/workflows*) ok '[]' ;;
 	*) err 404 "Not Found" ;;
 esac
@@ -116,6 +121,29 @@ expect_no_write "error text as --checks refused"
 # 6. No lab-probes workflow (404) is fine: no guard checks added.
 FAKE_PROTECTION='{"required_status_checks":{"checks":[{"context":"lint"}]}}' FAKE_RULESETS='[]' FAKE_PROBES=404 run "no lab-probes" 0
 expect_out "no lab-probes" "Required checks: lint"
+
+# 6b. The Maintainer sign-off job is required once it has run...
+FAKE_PROTECTION=404 FAKE_RULESETS="$existing" FAKE_PROBES=signoff \
+	FAKE_PR_RUNS='{"check_runs":[{"name":"Tester probes came first"},{"name":"Guardrail changes reviewed"},{"name":"Maintainer sign-off"}]}' \
+	run "sign-off job seen" 0 --apply
+got="$(put_checks)"
+want='["Lint and unit tests","Counterpart recorded","Tester probes came first","Guardrail changes reviewed","Maintainer sign-off"]'
+[ "$got" = "$want" ] || { echo "FAIL sign-off job seen: PUT checks $got, expected $want"; fail=$((fail + 1)); }
+
+# 6c. ...and left out, without aborting, before it has.
+FAKE_PROTECTION=404 FAKE_RULESETS="$existing" FAKE_PROBES=signoff run "sign-off job not yet seen" 0 --apply
+expect_out "sign-off job not yet seen" "hasn't run on a pull request yet"
+got="$(put_checks)"
+[ "$got" = "$four" ] || { echo "FAIL sign-off job not yet seen: PUT checks $got, expected $four"; fail=$((fail + 1)); }
+
+# 6d. Repository-level secrets are named, and immutable releases are planned.
+FAKE_PROTECTION=404 FAKE_RULESETS="$existing" FAKE_SECRETS='{"secrets":[{"name":"WP_ORG_SVN_PASSWORD"}]}' run "secrets and releases" 0
+expect_out "secrets and releases" "any workflow on any branch can read these"
+expect_out "secrets and releases" "WP_ORG_SVN_PASSWORD"
+expect_out "secrets and releases" "WOULD: make new releases immutable"
+expect_no_write "secrets and releases (dry run)"
+FAKE_PROTECTION=404 FAKE_RULESETS="$existing" run "keep releases mutable on request" 0 --no-immutable-releases --apply
+if grep -q 'immutable-releases' <(grep -E '^(PUT|POST) ' "$work/calls.log"); then echo "FAIL keep releases mutable: wrote immutable-releases"; fail=$((fail + 1)); fi
 
 # 7. --check-app any leaves the source open, and says so.
 FAKE_PROTECTION=404 FAKE_RULESETS="$existing" run "--check-app any" 0 --apply --check-app any

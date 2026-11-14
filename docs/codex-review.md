@@ -78,9 +78,24 @@ effort for a hard review by putting it on the first line, for example
 
 ## One-time setup
 
-- Add an OpenAI API key as the repository secret `OPENAI_API_KEY` (Settings →
-  Secrets and variables → Actions). Usage is billed to that API account,
-  separately from a ChatGPT subscription.
+- Put the OpenAI API key in an environment, not in the repository's secrets.
+  A repository secret can be read by any workflow on any branch as soon as the
+  branch is pushed, and cloud agent sessions can push workflow files. Usage is
+  billed to that API account, separately from a ChatGPT subscription.
+
+  ```sh
+  sh -c 'R=OWNER/REPO
+  gh api -X PUT repos/$R/environments/codex-review --input - <<EOF
+  {"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}
+  EOF
+  gh api -X POST repos/$R/environments/codex-review/deployment-branch-policies -f name=main -f type=branch
+  gh secret set OPENAI_API_KEY --env codex-review -R $R
+  gh secret delete OPENAI_API_KEY -R $R'
+  ```
+
+  Use the repository's default branch name in place of `main` if it differs.
+  The shared workflow's review job runs in that environment; callers that
+  still pass the secret explicitly keep working.
 - Create the `codex-review` label if you want to use the label trigger.
 
 ## Limits
