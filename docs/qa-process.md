@@ -36,13 +36,13 @@ lowers it without saying why.
 | 0 Docs | Copy, docs, comments, translations | Repository CI green |
 | 1 Routine | UI, styling, settings with no security or data effect, refactors with full unit coverage | Tier 0, plus unit tests seen to fail first |
 | 2 Behaviour | New defaults, list tables, notices, Site Health checks, anything a site owner can see change | Tier 1, plus a lab pass with the coverage matrix filled in |
-| 3 Sensitive | Authorization and capabilities, login and passwords, secrets, personal data, outbound mail or HTTP, destructive or bulk operations, multisite policy | Tier 2, plus separate-tester probes committed before any code, plus every probe resolved (PASS, a FAIL that was fixed, or a DISPUTED that Dan decided), plus a briefed Codex review (`/codex-review`) |
+| 3 Sensitive | Authorization and capabilities, login and passwords, secrets, personal data, outbound mail or HTTP, destructive or bulk operations, multisite policy | Tier 2, plus separate-tester probes committed before any code, plus every probe resolved (PASS, a FAIL that was fixed, or a DISPUTED that Dan decided), plus a briefed Codex review (`codex-review` on the Mac) |
 | 4 Release | Release candidates and anything going to WordPress.org | Tier 3 for the changes in it, plus an adversarial review of the candidate, plus an independent re-test of every fix |
 
 **Keep routine work cheap.** Most pull requests are Tier 0 to 2: CI, tests that
 can fail, the automatic review that already runs when a pull request opens, and
 a lab pass when a site owner would see the change. The expensive path (tester
-probes, a briefed Codex review in CI, adversarial review and re-test) is for
+probes, a briefed Codex review, adversarial review and re-test) is for
 security surfaces and releases, Tier 3 and 4. It runs once per explicit request,
 never on every push. See [codex-review.md](codex-review.md).
 
@@ -68,8 +68,8 @@ Each pass is written into an evidence record that ships with the pull request.
   and multisite, persistent object cache, browser or HTTP runner. Every cell is
   PASS, FAIL, NOT RUN or N/A.
 - **Review by a different model (Tier 3 and up).** Claude's pull requests get a
-  briefed Codex review, run in CI with `/codex-review`, and the other way
-  round. Lower tiers rely on the automatic review a pull request already gets
+  briefed Codex review, run from the Mac with `codex-review OWNER/REPO PR high`
+  and posted to the pull request, and the other way round. Lower tiers rely on the automatic review a pull request already gets
   when it opens. The reviewer reads the diff and the evidence record,
   and says whether the record supports the claims, not only whether the code
   looks right.
