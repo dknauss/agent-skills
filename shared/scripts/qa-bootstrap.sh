@@ -26,11 +26,21 @@
 # no pull-request or check requirement, and no guard files.
 #
 # Usage:
-#   qa-bootstrap.sh OWNER/REPO [--bot LOGIN] [--checks "Check A,Check B"]
+#   qa-bootstrap.sh OWNER/REPO [--bot LOGIN] [--check "Check A" --check "Check B"]
 #                   [--files /path/to/local/clone] [--apply]
 #
 #   --bot     machine account to add as a Write collaborator
-#   --checks  required status check names; default: the checks this script's
+#   --check NAME
+#             a required status check, exactly as GitHub shows it; repeat for
+#             each one. Use this for names with commas, e.g. "wordpress (7.4, 6.4)".
+#   --checks "A,B"
+#             the same, comma-separated, for names without commas. A comma
+#             inside parentheses is refused: it would split one name in two.
+#   --allow-unseen-check
+#             require a check that hasn't run yet on the default branch or a
+#             recent pull request (by default that's refused as a likely typo,
+#             since a required check that never runs blocks every merge)
+#   Default, with neither --check nor --checks: the checks this script's
 #             ruleset already requires (on a re-run) and the checks classic
 #             branch protection requires, plus "Tester probes came first" and
 #             "Guardrail changes reviewed" when the repo has
@@ -62,11 +72,25 @@ repo=""
 bot=""
 checks=""
 check_app=15368
+allow_unseen=0
 files_dir=""
 apply=0
 
 die() { echo "qa-bootstrap: $*" >&2; exit 1; }
 say() { echo "$*"; }
+# add_check NAME: add one required check (trimmed), once. checks holds one
+# name per line, so a name may contain commas.
+add_check() {
+	local c="$1"
+	c="${c#"${c%%[![:space:]]*}"}"
+	c="${c%"${c##*[![:space:]]}"}"
+	[ -n "$c" ] || return 0
+	if [ -z "$checks" ]; then
+		checks="$c"
+	elif ! grep -qxF -- "$c" <<<"$checks"; then
+		checks="$checks"$'\n'"$c"
+	fi
+}
 plan() { if [ "$apply" -eq 1 ]; then echo "APPLY: $*"; else echo "WOULD: $*"; fi; }
 
 # gh_get PATH [gh args...]: print the response body of a GET.
@@ -96,7 +120,16 @@ gh_get() {
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--bot) bot="${2:?--bot needs a login}"; shift 2 ;;
-		--checks) checks="${2:?--checks needs a comma-separated list}"; shift 2 ;;
+		--checks)
+			list="${2:?--checks needs a comma-separated list}"
+			if [[ "$list" =~ \([^\)]*, ]]; then
+				die "--checks splits on commas, and \"$list\" has a comma inside parentheses. Pass each such name with --check instead."
+			fi
+			IFS=',' read -r -a parts <<<"$list"
+			for c in "${parts[@]}"; do add_check "$c"; done
+			shift 2 ;;
+		--check) add_check "${2:?--check needs a name}"; shift 2 ;;
+		--allow-unseen-check) allow_unseen=1; shift ;;
 		--check-app) check_app="${2:?--check-app needs an app ID or any}"; shift 2 ;;
 		--files) files_dir="${2:?--files needs a directory}"; shift 2 ;;
 		--apply) apply=1; shift ;;
@@ -150,7 +183,8 @@ if [ -z "$checks" ]; then
 	# classic branch protection (on a first run), so a re-run never drops one.
 	if [ -n "$existing_id" ]; then
 		existing="$(gh_get "repos/$repo/rulesets/$existing_id")" || die "can't read ruleset $existing_id; nothing was changed."
-		checks="$(jq -r '[.rules[]? | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context] | join(",")' <<<"$existing")"
+		while IFS= read -r c; do add_check "$c"; done \
+			< <(jq -r '.rules[]? | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context' <<<"$existing")
 	fi
 	rc=0
 	protection="$(gh_get "repos/$repo/branches/$default_branch/protection")" || rc=$?
@@ -161,13 +195,13 @@ if [ -z "$checks" ]; then
 	fi
 	while IFS= read -r c; do
 		[ -n "$c" ] || continue
-		case ",$checks," in *",$c,"*) ;; *) checks="${checks:+$checks,}$c" ;; esac
+		add_check "$c"
 	done < <(jq -r '.required_status_checks.checks[]?.context // empty, .required_status_checks.contexts[]? // empty' <<<"$protection" | awk '!seen[$0]++')
 	rc=0
 	gh_get "repos/$repo/contents/.github/workflows/lab-probes.yml?ref=$default_branch" >/dev/null || rc=$?
 	if [ "$rc" -eq 0 ]; then
 		for c in "Tester probes came first" "Guardrail changes reviewed"; do
-			case ",$checks," in *",$c,"*) ;; *) checks="${checks:+$checks,}$c" ;; esac
+			add_check "$c"
 		done
 	elif [ "$rc" -ne 4 ]; then
 		die "can't check for lab-probes.yml; nothing was changed."
@@ -178,13 +212,54 @@ if [ "$is_fork" = "true" ]; then
 	checks=""
 fi
 [ "$check_app" = "any" ] || [[ "$check_app" =~ ^[0-9]+$ ]] || die "--check-app takes a numeric app ID or any, got $check_app"
-checks_json="$(jq -cn --arg c "$checks" --arg app "$check_app" '$c | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))
+checks_json="$(jq -cn --arg c "$checks" --arg app "$check_app" '$c | split("\n") | map(select(length > 0))
 	| map(if $app == "any" then {context: .} else {context: ., integration_id: ($app | tonumber)} end)')"
 # A check name is a job name. Anything that looks like JSON or a URL is an API
 # error leaking through, so refuse it rather than require a check that never runs.
 bad="$(jq -r '.[].context | select(test("[{}\"\\\\]|https?://|^\\s*$"))' <<<"$checks_json")"
 if [ -n "$bad" ]; then
 	die "refusing these required check names, which look like an error message, not a job: $bad"
+fi
+
+# A required check that never reports blocks every merge. Compare the names
+# against the check runs GitHub has seen on the default branch and on the heads
+# of the ten most recent pull requests (pull_request_target jobs only show
+# there), and refuse names that appear nowhere unless --allow-unseen-check.
+# reported REF: every check-run name and commit-status context on REF, all
+# pages. (A CI service outside GitHub Actions may report statuses only.)
+reported() {
+	local rc=0
+	gh_get "repos/$repo/commits/$1/check-runs?per_page=100" --paginate --jq '.check_runs[].name' || rc=$?
+	[ "$rc" -eq 0 ] || [ "$rc" -eq 4 ] || return "$rc"
+	rc=0
+	gh_get "repos/$repo/commits/$1/statuses?per_page=100" --paginate --jq '.[].context' || rc=$?
+	[ "$rc" -eq 0 ] || [ "$rc" -eq 4 ] || return "$rc"
+	return 0
+}
+if [ "$checks_json" != "[]" ]; then
+	seen=""
+	rc=0
+	runs="$(reported "$default_branch")" || rc=$?
+	[ "$rc" -eq 0 ] || [ "$rc" -eq 4 ] || die "can't read check runs on $default_branch; nothing was changed."
+	seen="$runs"
+	rc=0
+	heads="$(gh_get "repos/$repo/pulls?state=all&per_page=10" --jq '.[].head.sha')" || rc=$?
+	[ "$rc" -eq 0 ] || [ "$rc" -eq 4 ] || die "can't list pull requests; nothing was changed."
+	for sha in $heads; do
+		rc=0
+		runs="$(reported "$sha")" || rc=$?
+		[ "$rc" -eq 0 ] || [ "$rc" -eq 4 ] || die "can't read check runs for $sha; nothing was changed."
+		seen="$seen"$'\n'"$runs"
+	done
+	unseen="$(jq -r '.[].context' <<<"$checks_json" | while IFS= read -r c; do grep -qxF -- "$c" <<<"$seen" || echo "$c"; done)"
+	if [ -n "$unseen" ]; then
+		if [ "$allow_unseen" -eq 1 ]; then
+			say "   Warning: these checks haven't run yet, so they will block merges until they do:"
+			printf '     %s\n' $'\n'"$unseen" | sed '/^ *$/d'
+		else
+			die "these required checks have never run on $default_branch or a recent pull request, so requiring them would block every merge: $(tr '\n' ';' <<<"$unseen" | sed 's/;$//; s/;/; /g'). Check the exact names (pass a name with a comma via --check), or add --allow-unseen-check for a job that hasn't run yet."
+		fi
+	fi
 fi
 
 ruleset="$(jq -n --arg name "$RULESET_NAME" --argjson checks "$checks_json" --argjson fork "$is_fork" '{
