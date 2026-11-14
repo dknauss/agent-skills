@@ -59,6 +59,17 @@ the owner, so a coordinator thread can post a brief for its reviewer this way.
 The builder thread must not post one: the QA process forbids the builder from
 writing the reviewer's brief.
 
+## When to use it
+
+Only on purpose, and only once per request. Use it for Tier 3 changes (login,
+capabilities, secrets, personal data and the like) and release candidates, with
+a brief. Routine pull requests don't need it: CI and the automatic review a pull
+request already gets when it opens are enough. Nothing runs on push.
+
+Effort defaults to `low`, and the prompt keeps Codex to the diff. Raise the
+effort for a hard review by putting it on the first line, for example
+`/codex-review high`, then the brief on the following lines.
+
 ## One-time setup
 
 - Add an OpenAI API key as the repository secret `OPENAI_API_KEY` (Settings →

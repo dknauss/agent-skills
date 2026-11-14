@@ -41,9 +41,12 @@ on:
         required: false
         default: ""
       effort:
+        description: >-
+          Reasoning effort when the brief doesn't set one. Low keeps routine
+          runs cheap; a brief's first line can raise it: "/codex-review high".
         type: string
         required: false
-        default: ""
+        default: "low"
     secrets:
       OPENAI_API_KEY:
         required: true
@@ -90,7 +93,9 @@ jobs:
       # Everything Codex needs from the network is fetched here, before it
       # starts, into .codex-context/ (ignored by git via .git/info/exclude).
       - name: Gather context (brief, named issues, WordPress core)
+        id: context
         env:
+          DEFAULT_EFFORT: ${{ inputs.effort }}
           GH_TOKEN: ${{ github.token }}
           PR: ${{ inputs.pr-number }}
           BRIEF: ${{ inputs.brief }}
@@ -98,7 +103,16 @@ jobs:
         run: |
           mkdir -p .codex-context
           echo ".codex-context/" >> .git/info/exclude
-          printf '%s\n' "$BRIEF" | sed '1{/^[[:space:]]*\/codex-review[[:space:]]*$/d; s/^[[:space:]]*\/codex-review[[:space:]]*//}' > .codex-context/brief.md
+          # "/codex-review [low|medium|high]" on the first line sets the effort.
+          first="$(printf '%s\n' "$BRIEF" | head -n1)"
+          effort="$DEFAULT_EFFORT"
+          if [[ "$first" =~ ^[[:space:]]*/codex-review[[:space:]]+(low|medium|high)[[:space:]]*$ ]]; then
+            effort="${BASH_REMATCH[1]}"
+            first="/codex-review"
+          fi
+          echo "effort=$effort" >> "$GITHUB_OUTPUT"
+          { printf '%s\n' "$first"; printf '%s\n' "$BRIEF" | tail -n +2; } \
+            | sed '1{/^[[:space:]]*\/codex-review[[:space:]]*$/d; s/^[[:space:]]*\/codex-review[[:space:]]*//}' > .codex-context/brief.md
           # Issues the brief names, as #N or owner/repo#N in this repository.
           for n in $(grep -oE "(^|[^A-Za-z0-9/])(${GITHUB_REPOSITORY}#|#)[0-9]+" .codex-context/brief.md | grep -oE '[0-9]+$' | sort -u); do
             [ "$n" = "$PR" ] && continue
@@ -134,6 +148,7 @@ jobs:
             echo "Report format: findings ranked Critical / High / Medium / Low / Info. For each, what you checked,"
             echo "what you did, the result, and a suggested fix. Say what you could not check and why."
             echo "End with a one-line verdict: merge, merge after fixes, or don't merge."
+            echo "Stay within the pull request's diff and what it touches; don't review unrelated code."
             echo
             if [ -s .codex-context/brief.md ]; then
               echo "## Brief"
@@ -154,7 +169,7 @@ jobs:
           prompt-file: .codex-context/prompt.md
           permission-profile: ":workspace"
           model: ${{ inputs.model }}
-          effort: ${{ inputs.effort }}
+          effort: ${{ steps.context.outputs.effort }}
 
   post:
     name: Post the review
