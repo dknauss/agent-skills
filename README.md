@@ -199,6 +199,7 @@ node eval/harness/run.mjs
 - [Principles](docs/principles.md) - Design philosophy
 - [Packaging](docs/packaging.md) - Build and distribution
 - [Compatibility Policy](docs/compatibility-policy.md) - Version targeting
+- [QA and AI-testing process](docs/qa-process.md) - Risk tiers, separate testers, labs and guardrails for agent-built plugins
 
 ## License
 
