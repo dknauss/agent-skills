@@ -53,6 +53,10 @@ case "$path" in
 	repos/o/r/commits/abc123/check-runs*) ok "$FAKE_PR_RUNS" ;;
 	repos/o/r/contents/.github/workflows/lab-probes.yml*)
 		case "$FAKE_PROBES" in 404) err 404 "Not Found" ;; *) ok '{}' ;; esac ;;
+	repos/o/r/collaborators*) ok "${FAKE_COLLABS:-[]}" ;;
+	repos/o/r/actions/secrets*)
+		case "${FAKE_SECRETS:-404}" in 404) err 404 "Not Found" ;; *) ok "$FAKE_SECRETS" ;; esac ;;
+	repos/o/r/immutable-releases) ok "${FAKE_IMMUTABLE:-{\"enabled\":false}}" ;;
 	repos/o/r/contents/.github/workflows*) ok '[]' ;;
 	*) err 404 "Not Found" ;;
 esac
@@ -75,7 +79,8 @@ expect_no_write() { if grep -qE '^(PUT|POST|PATCH|DELETE) ' "$work/calls.log"; t
 put_checks() { grep '^PUT repos/o/r/rulesets/11 ' "$work/calls.log" | sed 's/^PUT [^ ]* //' | jq -c '[.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context]'; }
 put_apps() { grep '^PUT repos/o/r/rulesets/11 ' "$work/calls.log" | sed 's/^PUT [^ ]* //' | jq -c '[.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].integration_id] | unique'; }
 
-four='["Lint and unit tests","Counterpart recorded","Tester probes came first","Guardrail changes reviewed"]'
+# What Keel's ruleset should require now that the label job is gone.
+three='["Lint and unit tests","Counterpart recorded","Tester probes came first"]'
 existing='[{"id":11,"name":"QA process: protect default branch"},{"id":12,"name":"QA process: release tags"}]'
 existing_full='{"id":11,"rules":[{"type":"deletion"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Lint and unit tests"},{"context":"Counterpart recorded"},{"context":"Tester probes came first"},{"context":"Guardrail changes reviewed"}]}}]}'
 export FAKE_PROBES=200 FAKE_RULESET="$existing_full"
@@ -88,7 +93,7 @@ export FAKE_PR_RUNS='{"check_runs":[{"name":"Tester probes came first"},{"name":
 # 1. The Keel incident: re-run after classic protection was removed.
 FAKE_PROTECTION=404 FAKE_RULESETS="$existing" run "re-run with protection 404" 0 --apply
 got="$(put_checks)"
-[ "$got" = "$four" ] || { echo "FAIL re-run with protection 404: PUT checks $got, expected $four"; fail=$((fail + 1)); }
+[ "$got" = "$three" ] || { echo "FAIL re-run with protection 404: PUT checks $got, expected $three"; fail=$((fail + 1)); }
 # Every required check is pinned to GitHub Actions, so a commit status posted
 # with a repo-scoped token can't stand in for one.
 got="$(put_apps)"
@@ -96,7 +101,7 @@ got="$(put_apps)"
 
 # 2. First run: classic protection supplies two checks, lab-probes adds two.
 FAKE_PROTECTION='{"required_status_checks":{"checks":[{"context":"Lint and unit tests"},{"context":"Counterpart recorded"}]}}' FAKE_RULESETS='[]' run "first run" 0
-expect_out "first run" "Required checks: Lint and unit tests, Counterpart recorded, Tester probes came first, Guardrail changes reviewed"
+expect_out "first run" "Required checks: Lint and unit tests, Counterpart recorded, Tester probes came first"
 expect_no_write "first run (dry run)"
 
 # 3. Any other error reading protection aborts before writing anything.
@@ -116,6 +121,28 @@ expect_no_write "error text as --checks refused"
 # 6. No lab-probes workflow (404) is fine: no guard checks added.
 FAKE_PROTECTION='{"required_status_checks":{"checks":[{"context":"lint"}]}}' FAKE_RULESETS='[]' FAKE_PROBES=404 run "no lab-probes" 0
 expect_out "no lab-probes" "Required checks: lint"
+
+# 6b. A re-run drops the retired label job from the existing ruleset, even
+# though GitHub has seen it run, and says so.
+FAKE_PROTECTION=404 FAKE_RULESETS="$existing" run "retired check dropped" 0 --apply
+expect_out "retired check dropped" 'Dropping "Guardrail changes reviewed"'
+got="$(put_checks)"
+[ "$got" = "$three" ] || { echo "FAIL retired check dropped: PUT checks $got, expected $three"; fail=$((fail + 1)); }
+
+# 6c. Other accounts that can push or merge are named, with the removal command.
+FAKE_PROTECTION=404 FAKE_RULESETS="$existing" FAKE_COLLABS='[{"login":"owner","permissions":{"admin":true,"push":true}},{"login":"agent-bot","permissions":{"push":true}},{"login":"reader","permissions":{"push":false}}]' run "collaborators listed" 0
+expect_out "collaborators listed" "gh api -X DELETE repos/o/r/collaborators/agent-bot"
+if grep -q "collaborators/reader\|collaborators/owner" <<<"$out"; then echo "FAIL collaborators listed: named a read-only account or the owner"; fail=$((fail + 1)); fi
+expect_no_write "collaborators listed (dry run)"
+
+# 6d. Repository-level secrets are named, and immutable releases are planned.
+FAKE_PROTECTION=404 FAKE_RULESETS="$existing" FAKE_SECRETS='{"secrets":[{"name":"WP_ORG_SVN_PASSWORD"}]}' run "secrets and releases" 0
+expect_out "secrets and releases" "any workflow on any branch can read these"
+expect_out "secrets and releases" "WP_ORG_SVN_PASSWORD"
+expect_out "secrets and releases" "WOULD: make new releases immutable"
+expect_no_write "secrets and releases (dry run)"
+FAKE_PROTECTION=404 FAKE_RULESETS="$existing" run "keep releases mutable on request" 0 --no-immutable-releases --apply
+if grep -q 'immutable-releases' <(grep -E '^(PUT|POST) ' "$work/calls.log"); then echo "FAIL keep releases mutable: wrote immutable-releases"; fail=$((fail + 1)); fi
 
 # 7. --check-app any leaves the source open, and says so.
 FAKE_PROTECTION=404 FAKE_RULESETS="$existing" run "--check-app any" 0 --apply --check-app any
