@@ -21,6 +21,9 @@ jobs:
       - name: qa-bootstrap.sh never turns an API error into a setting
         run: bash shared/scripts/tests/qa-bootstrap.test.sh
 
+      - name: codex-review.sh reviews the PR head and posts only after Codex exits
+        run: bash shared/scripts/tests/codex-review.test.sh
+
       - name: Build skillpacks (Codex + VS Code)
         run: node shared/scripts/skillpack-build.mjs --clean --out=dist --targets=codex,vscode
 

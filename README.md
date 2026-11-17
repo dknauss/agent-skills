@@ -200,7 +200,7 @@ node eval/harness/run.mjs
 - [Packaging](docs/packaging.md) - Build and distribution
 - [Compatibility Policy](docs/compatibility-policy.md) - Version targeting
 - [QA and AI-testing process](docs/qa-process.md) - Risk tiers, separate testers, labs and guardrails for agent-built plugins
-- [Independent Codex review in CI](docs/codex-review.md) - Reusable workflow: `/codex-review` on a PR runs Codex with a brief and posts the report
+- [Independent Codex review](docs/codex-review.md) - `codex-review OWNER/REPO PR high` runs Codex on the Mac with a brief and posts the report to the PR (GitHub Actions fallback included)
 
 ## License
 
